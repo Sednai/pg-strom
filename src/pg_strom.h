@@ -593,6 +593,8 @@ extern int		PAGE_SHIFT;
 extern long		PHYS_PAGES;
 #define PAGE_ALIGN(sz)		TYPEALIGN(PAGE_SIZE,(sz))
 
+extern int		pgstrom_hll_register_bits;
+
 /* --------------------------------------------------------------------
  *
  * Function Declarations
