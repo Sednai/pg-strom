@@ -2052,7 +2052,7 @@ is_altfunc_expression(Node *node, int *p_extra_sz)
 		{
 			retval = true;
 		}
-		else if (strcmp(NameStr(form_proc->proname), "hll_hash") == 0)
+		else if (strcmp(NameStr(form_proc->proname), "hll_pcount") == 0)
 		{
 			extra_sz = MAXALIGN(VARHDRSZ + (1UL << pgstrom_hll_register_bits));
 			retval = true;
@@ -3383,19 +3383,33 @@ codegen_projection_partial_funcion(FuncExpr *f, codegen_context *context)
 		Assert(exprType((Node *)filter) == BOOLOID);
 		expr = make_expr_conditional(expr, filter, true);
 	}
-	else if (strcmp(proc_name, "hll_hash") == 0)
+	else if (strcmp(proc_name, "hll_pcount") == 0)
 	{
+		FuncExpr   *hfunc;
+		char	   *hfunc_name;
+		Oid			hfunc_namespace;
+
 		Assert(list_length(f->args) == 1);
-		dfunc = pgstrom_devfunc_lookup(f->funcid,
-									   f->funcresulttype,
-									   f->args,
-									   f->inputcollid);
+		hfunc = linitial(f->args);
+		Assert(IsA(hfunc, FuncExpr));
+		hfunc_name = get_func_name(hfunc->funcid);
+		hfunc_namespace = get_func_namespace(hfunc->funcid);
+		if (strcmp(hfunc_name, "hll_hash") != 0 ||
+			hfunc_namespace != get_namespace_oid("pgstrom", false))
+			elog(ERROR, "Bug? hll_pcount() is invoked with %s",
+				 format_procedure(hfunc->funcid));
+		pfree(hfunc_name);
+
+		dfunc = pgstrom_devfunc_lookup(hfunc->funcid,
+									   hfunc->funcresulttype,
+									   hfunc->args,
+									   hfunc->inputcollid);
 		if (!dfunc)
 			elog(ERROR, "device function lookup failed: %s",
-				 format_procedure(f->funcid));
+				 format_procedure(hfunc->funcid));
 		pgstrom_devfunc_track(context, dfunc);
 
-		expr = (Expr *) f;
+		expr = (Expr *)hfunc;
 	}
 	else
 	{
@@ -3436,7 +3450,7 @@ gpupreagg_codegen_projection(StringInfo kern,
 	/*
 	 * Extract tlist for device projection (a.k.a template of kds_slot)
 	 */
-	tlist_part = make_tlist_device_projection(cscan->custom_scan_tlist,
+	tlist_part = make_tlist_device_projection(cscan->scan.plan.targetlist,
 											  cscan->scan.scanrelid,
 											  outer_tlist,
 											  &outer_refs_any,
@@ -4083,7 +4097,7 @@ gpupreagg_codegen_common_calc(TargetEntry *tle,
 			 strcmp(func_name, "pcov_y2") == 0 ||
 			 strcmp(func_name, "pcov_xy") == 0)
 		aggcalc_ops = "add";
-	else if (strcmp(func_name, "hll_hash") == 0)
+	else if (strcmp(func_name, "hll_pcount") == 0)
 	{
 		pfree(func_name);
 		/* HLL registers are always bytea */
