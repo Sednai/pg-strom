@@ -594,6 +594,7 @@ _PG_init(void)
 	pgstrom_init_gpupreagg();
 	pgstrom_init_relscan();
 	pgstrom_init_arrow_fdw();
+	pgstrom_init_arrow_simd();
 	pgstrom_init_gpu_cache();
 
 	/* dummy custom-scan node */

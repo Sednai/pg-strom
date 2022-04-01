@@ -37,7 +37,7 @@ __STROM_OBJS = main.o nvrtc.o extra.o \
         gpu_device.o gpu_context.o gpu_mmgr.o \
         relscan.o gpu_tasks.o gpu_cache.o \
         gpuscan.o gpujoin.o gpupreagg.o \
-        arrow_fdw.o arrow_nodes.o arrow_write.o arrow_pgsql.o \
+        arrow_fdw.o arrow_nodes.o arrow_write.o arrow_pgsql.o arrow_simd.o \
         aggfuncs.o float2.o tinyint.o misc.o
 STROM_OBJS = $(addprefix $(STROM_BUILD_ROOT)/src/, $(__STROM_OBJS))
 

@@ -179,6 +179,8 @@ struct ArrowFdwState
 	pg_atomic_uint32	__rbatch_nskip_local;	/* if single process */
 	pgstrom_data_store *curr_pds;	/* current focused buffer */
 	cl_ulong	curr_index;			/* current index to row on KDS */
+	/* state of SIMD support */
+	void	   *simd_state;
 	/* state of RecordBatches */
 	uint32		num_rbatches;
 	RecordBatchState *rbatches[FLEXIBLE_ARRAY_MEMBER];
@@ -1835,6 +1837,7 @@ ArrowBeginForeignScan(ForeignScanState *node, int eflags)
 	ForeignScan	   *fscan = (ForeignScan *) node->ss.ps.plan;
 	ListCell	   *lc;
 	Bitmapset	   *referenced = NULL;
+	ArrowFdwState  *af_state;
 
 	foreach (lc, fscan->fdw_private)
 	{
@@ -1844,10 +1847,14 @@ ArrowBeginForeignScan(ForeignScanState *node, int eflags)
 			referenced = bms_add_member(referenced, j -
 										FirstLowInvalidHeapAttributeNumber);
 	}
-	node->fdw_state = ExecInitArrowFdw(&node->ss,
-									   NULL,
-									   fscan->scan.plan.qual,
-									   referenced);
+
+	af_state = ExecInitArrowFdw(&node->ss,
+								NULL,
+								fscan->scan.plan.qual,
+								referenced);
+	af_state->simd_state = arrowSimdExecInit(fscan->scan.plan.qual);
+
+	node->fdw_state = af_state;
 }
 
 typedef struct
@@ -2272,19 +2279,27 @@ ExecScanChunkArrowFdw(GpuTaskState *gts)
 static TupleTableSlot *
 ArrowIterateForeignScan(ForeignScanState *node)
 {
+	EState		   *estate = node->ss.ps.state;
 	ArrowFdwState  *af_state = node->fdw_state;
 	Relation		relation = node->ss.ss_currentRelation;
 	TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
 	pgstrom_data_store *pds;
+	uint32_t		index;
 
-	while ((pds = af_state->curr_pds) == NULL ||
-		   af_state->curr_index >= pds->kds.nitems)
+	for (;;)
 	{
-		EState	   *estate = node->ss.ps.state;
-
-		/* unload the previous RecordBatch, if any */
+		pds = af_state->curr_pds;
 		if (pds)
+		{
+			if (af_state->simd_state)
+				index = arrowSimdExecNext(af_state->simd_state);
+			else
+				index = af_state->curr_index++;
+			if (index < pds->kds.nitems)
+				break;
+			/* unload the previous RecordBatch */
 			PDS_release(pds);
+		}
 		af_state->curr_index = 0;
 		af_state->curr_pds = arrowFdwLoadRecordBatch(af_state,
 													 relation,
@@ -2293,9 +2308,10 @@ ArrowIterateForeignScan(ForeignScanState *node)
 													 NULL);
 		if (!af_state->curr_pds)
 			return NULL;
+		arrowSimdExecChunk(af_state->simd_state, af_state->curr_pds);
 	}
-	Assert(pds && af_state->curr_index < pds->kds.nitems);
-	if (KDS_fetch_tuple_arrow(slot, &pds->kds, af_state->curr_index++))
+	Assert(pds && index < pds->kds.nitems);
+	if (KDS_fetch_tuple_arrow(slot, &pds->kds, index))
 		return slot;
 	return NULL;
 }
@@ -2364,6 +2380,9 @@ ExplainArrowFdw(ArrowFdwState *af_state,
 	int			i, j, k;
 	StringInfoData	buf;
 
+	/* shows SIMD supported filters, if any */
+	arrowSimdExplain(af_state->simd_state, es, dcontext);
+	
 	/* shows referenced columns */
 	initStringInfo(&buf);
 	for (k = bms_next_member(af_state->referenced, -1);
@@ -2517,8 +2536,10 @@ static void
 ArrowExplainForeignScan(ForeignScanState *node, ExplainState *es)
 {
 	Relation	frel = node->ss.ss_currentRelation;
+	List	   *dcontext = deparse_context_for(RelationGetRelationName(frel),
+											   RelationGetRelid(frel));
 
-	ExplainArrowFdw((ArrowFdwState *)node->fdw_state, frel, es, NIL);
+	ExplainArrowFdw((ArrowFdwState *)node->fdw_state, frel, es, dcontext);
 }
 
 /*

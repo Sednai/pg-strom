@@ -1292,6 +1292,15 @@ extern void ExplainArrowFdw(ArrowFdwState *af_state,
 extern void pgstrom_init_arrow_fdw(void);
 
 /*
+ * arrow_simd.c
+ */
+extern void *arrowSimdExecInit(List *quals);
+extern void arrowSimdExecChunk(void *simd_state, pgstrom_data_store *pds);
+extern uint32_t arrowSimdExecNext(void *simd_state);
+extern void arrowSimdExplain(void *simd_state, ExplainState *es, List *dcontext);
+extern void pgstrom_init_arrow_simd(void);
+
+/*
  * gpu_cache.c
  */
 extern bool baseRelHasGpuCache(PlannerInfo *root,
