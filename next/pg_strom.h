@@ -59,6 +59,7 @@
 #include <limits.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include "xpu_common.h"
 #include "pg_utils.h"
 #include "heterodb_extra.h"
 
