@@ -17,7 +17,7 @@
 typedef struct
 {
 	uint8_t		data[UUID_LEN];
-} pgsql_uuit_t;
+} pgsql_uuid_t;
 
 /* pg_macaddr_t */
 typedef struct

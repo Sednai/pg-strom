@@ -20,7 +20,7 @@ typedef struct
     TimeADT     time;   /* all time units other than months and years */
     int32_t     zone;   /* numeric time zone, in seconds */
 } TimeTzADT;
-#endif DATE_H
+#endif /* DATE_H */
 #ifndef DATATYPE_TIMESTAMP_H
 typedef int64_t         Timestamp;
 typedef int64_t         TimestampTz;
@@ -33,7 +33,7 @@ typedef struct
     int32_t     day;    /* days, after time for alignment */
     int32_t     month;  /* months and years, after time for alignment */
 } Interval;
-#endif
+#endif /* DATATYPE_TIMESTAMP_H */
 
 
 #ifdef PGSTROM_SIMPLE_DEVTYPE_TEMPLATE

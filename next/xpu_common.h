@@ -11,11 +11,18 @@
  */
 #ifndef XPU_COMMON_H
 #define XPU_COMMON_H
-/*
- * Definition of primitive types
- */
+#include <assert.h>
+#include <limits.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
+#include "postgres_ext.h"
+#include "pg_config.h"
+#include "pg_config_manual.h"
+
+/* Definition of several primitive types */
+typedef __int128	int128_t;
 #if defined(__CUDACC__)
 typedef __half		float2_t;
 #elif defined(HAVE_FLOAT2)
@@ -23,6 +30,8 @@ typedef _Float16	float2_t;
 #else
 typedef uint16_t	float2_t;
 #endif
+typedef float		float4_t;
+typedef double		float8_t;
 
 /*
  * Functions with qualifiers
@@ -48,13 +57,14 @@ typedef uint16_t	float2_t;
 /*
  * Several fundamental data types and macros
  */
-#ifndef __STROM_HOST__
-typedef uint32_t		Oid;
-typedef uint64_t		Datum;
-#define PointerGetDatum(X)		((Datum)(X))
-#define DatumGetPointer(X)		((char *)(X))
-#define NAMEDATALEN				64
+#ifndef POSTGRES_H
+#define Assert(cond)		assert(cond)
+#define Max(a,b)			((a) > (b) ? (a) : (b))
+#define Min(a,b)			((a) < (b) ? (a) : (b))
+typedef uint64_t			Datum;
 
+#define PointerGetDatum(X)	((Datum)(X))
+#define DatumGetPointer(X)	((char *)(X))
 #define TYPEALIGN(ALIGNVAL,LEN)         \
 	(((uint64_t)(LEN) + ((ALIGNVAL) - 1)) & ~((uint64_t)((ALIGNVAL) - 1)))
 #define TYPEALIGN_DOWN(ALIGNVAL,LEN)                        \
@@ -63,7 +73,7 @@ typedef uint64_t		Datum;
 #define MAXIMUM_ALIGNOF		8
 #define MAXALIGN(LEN)		TYPEALIGN(MAXIMUM_ALIGNOF,LEN)
 #define MAXALIGN_DOWN(LEN)	TYPEALIGN_DOWN(MAXIMUM_ALIGNOF,LEN)
-#endif
+#endif	/* POSTGRES_H */
 #define MAXIMUM_ALIGNOF_SHIFT 3
 
 #ifdef __CUDACC__
@@ -176,6 +186,42 @@ kcxt_reset(kern_context *kcxt)
 {
 	kcxt->vlpos = kcxt->vlbuf;
 }
+
+INLINE_FUNCTION(void)
+__STROM_EREPORT(kern_context *kcxt,
+				int errcode,
+				const char *filename,
+				int lineno,
+				const char *funcname,
+				const char *message)
+{
+	if (kcxt->errcode == 0 && errcode != 0)
+	{
+		const char *pos;
+
+		for (pos = filename; *pos != '\0'; pos++)
+		{
+			if (pos[0] == '/' && pos[1] != '\0')
+				filename = pos + 1;
+		}
+		if (!message)
+			message = "GPU kernel internal error";
+		kcxt->errcode  = errcode;
+		kcxt->error_filename = filename;
+		kcxt->error_lineno   = lineno;
+		kcxt->error_funcname = funcname;
+		kcxt->error_message  = message;
+	}
+}
+#define STROM_ELOG(kcxt, message)									\
+	__STROM_EREPORT((kcxt),ERRCODE_INTERNAL_ERROR,					\
+					__FILE__,__LINE__,__FUNCTION__,(message))
+#define STROM_EREPORT(kcxt, errcode, message)						\
+	__STROM_EREPORT((kcxt),(errcode),								\
+					__FILE__,__LINE__,__FUNCTION__,(message))
+#define STROM_CPU_FALLBACK(kcxt, errcode, message)					\
+	__STROM_EREPORT((kcxt),(errcode) | ERRCODE_FLAGS_CPU_FALLBACK,	\
+					__FILE__,__LINE__,__FUNCTION__,(message))
 
 /* ----------------------------------------------------------------
  *
@@ -308,8 +354,20 @@ __kds_unpack(uint32_t offset)
 	return (size_t)offset << MAXIMUM_ALIGNOF_SHIFT;
 }
 
-/* attribute number of system columns */
-#ifndef SYSATTR_H
+/* ----------------------------------------------------------------
+ *
+ * Definitions of HeapTuple/IndexTuple and related
+ *
+ * ----------------------------------------------------------------
+ */
+#ifdef POSTGRES_H
+#include "access/htup_details.h"
+#include "access/itup.h"
+#include "access/sysattr.h"
+#else
+/*
+ * Attribute numbers for the system-defined attributes
+ */
 #define SelfItemPointerAttributeNumber			(-1)
 #define ObjectIdAttributeNumber					(-2)
 #define MinTransactionIdAttributeNumber			(-3)
@@ -318,12 +376,10 @@ __kds_unpack(uint32_t offset)
 #define MaxCommandIdAttributeNumber				(-6)
 #define TableOidAttributeNumber					(-7)
 #define FirstLowInvalidHeapAttributeNumber		(-8)
-#endif	/* !SYSATTR_H */
 
 /*
- * kern_tupitem - individual items for KDS_FORMAT_ROW
+ * ItemPointer:
  */
-#ifndef ITEMPTR_H
 typedef struct
 {
 	struct {
@@ -332,9 +388,10 @@ typedef struct
 	} ip_blkid;
 	uint16_t		ip_posid;
 } ItemPointerData;
-#endif	/* ITEMPTR_H */
 
-#ifndef HTUP_DETAILS_H
+/*
+ * HeapTupleHeaderData
+ */
 typedef struct HeapTupleFields
 {
 	uint32_t		t_xmin;		/* inserting xact ID */
@@ -353,7 +410,7 @@ typedef struct DatumTupleFields
     Oid			datum_typeid;	/* composite type OID, or RECORDOID */
 } DatumTupleFields;
 
-struct
+typedef struct HeapTupleHeaderData
 {
 	union {
 		HeapTupleFields		t_heap;
@@ -368,9 +425,235 @@ struct
     /* ^ - 23 bytes - ^ */
     uint8_t			t_bits[1];		/* null-bitmap -- VARIABLE LENGTH */
 } HeapTupleHeaderData;
-#endif	/* HTUP_DETAILS_H */
-typedef struct HeapTupleHeaderData	HeapTupleHeaderData;
 
+/*
+ * information stored in t_infomask:
+ */
+#define HEAP_HASNULL			0x0001	/* has null attribute(s) */
+#define HEAP_HASVARWIDTH		0x0002	/* has variable-width attribute(s) */
+#define HEAP_HASEXTERNAL		0x0004	/* has external stored attribute(s) */
+#define HEAP_HASOID				0x0008	/* has an object-id field */
+#define HEAP_XMAX_KEYSHR_LOCK	0x0010	/* xmax is a key-shared locker */
+#define HEAP_COMBOCID			0x0020	/* t_cid is a combo cid */
+#define HEAP_XMAX_EXCL_LOCK		0x0040	/* xmax is exclusive locker */
+#define HEAP_XMAX_LOCK_ONLY		0x0080	/* xmax, if valid, is only a locker */
+
+#define HEAP_XMIN_COMMITTED		0x0100	/* t_xmin committed */
+#define HEAP_XMIN_INVALID		0x0200	/* t_xmin invalid/aborted */
+#define HEAP_XMAX_COMMITTED		0x0400	/* t_xmax committed */
+#define HEAP_XMAX_INVALID		0x0800	/* t_xmax invalid/aborted */
+#define HEAP_XMAX_IS_MULTI		0x1000	/* t_xmax is a MultiXactId */
+#define HEAP_UPDATED			0x2000	/* this is UPDATEd version of row */
+#define HEAP_MOVED_OFF			0x4000	/* unused in xPU */
+#define HEAP_MOVED_IN			0x8000	/* unused in xPU */
+
+/*
+ * information stored in t_infomask2:
+ */
+#define HEAP_NATTS_MASK			0x07FF  /* 11 bits for number of attributes */
+#define HEAP_KEYS_UPDATED		0x2000  /* tuple was updated and key cols
+										 * modified, or tuple deleted */
+#define HEAP_HOT_UPDATED		0x4000	/* tuple was HOT-updated */
+#define HEAP_ONLY_TUPLE			0x8000	/* this is heap-only tuple */
+#define HEAP2_XACT_MASK			0xE000	/* visibility-related bits */
+
+/* null-bitmap checker */
+#define att_isnull(ATT, BITS) (!((BITS)[(ATT) >> 3] & (1 << ((ATT) & 0x07))))
+#define BITMAPLEN(NATTS)		(((int)(NATTS) + 7) / 8)
+
+/*
+ * Index tuple header structure
+ *
+ * All index tuples start with IndexTupleData.  If the HasNulls bit is set,
+ * this is followed by an IndexAttributeBitMapData.  The index attribute
+ * values follow, beginning at a MAXALIGN boundary.
+ */
+typedef struct IndexTupleData
+{
+	ItemPointerData		t_tid;		/* reference TID to heap tuple */
+
+	/* ---------------
+	 * t_info is laid out in the following fashion:
+	 *
+	 * 15th (high) bit: has nulls
+	 * 14th bit: has var-width attributes
+	 * 13th bit: AM-defined meaning
+	 * 12-0 bit: size of tuple
+	 * ---------------
+	 */
+	uint16_t			t_info;
+
+	char				data[1];	/* data or IndexAttributeBitMapData */
+} IndexTupleData;
+
+typedef struct IndexAttributeBitMapData
+{
+	uint8_t				bits[(INDEX_MAX_KEYS + 8 - 1) / 8];
+} IndexAttributeBitMapData;
+
+#define INDEX_SIZE_MASK     0x1fff
+#define INDEX_VAR_MASK      0x4000
+#define INDEX_NULL_MASK     0x8000
+#endif	/* POSTGRES_H */
+
+/* ----------------------------------------------------------------
+ *
+ * Definitions of PageHeader/ItemId and related
+ *
+ * ----------------------------------------------------------------
+ */
+#ifdef POSTGRES_H
+#include "access/gist.h"
+#include "access/transam.h"
+#include "storage/bufpage.h"
+#include "storage/block.h"
+#include "storage/itemid.h"
+#include "storage/off.h"
+#else
+/* definitions in access/transam.h */
+typedef uint32_t		TransactionId;
+#define InvalidTransactionId		((TransactionId) 0)
+#define BootstrapTransactionId		((TransactionId) 1)
+#define FrozenTransactionId			((TransactionId) 2)
+#define FirstNormalTransactionId	((TransactionId) 3)
+#define MaxTransactionId			((TransactionId) 0xffffffff)
+
+/* definitions in storage/block.h */
+typedef uint32_t		BlockNumber;
+
+#define InvalidBlockNumber			((BlockNumber) 0xffffffff)
+#define MaxBlockNumber				((BlockNumber) 0xfffffffe)
+
+/* definitions in storage/itemid.h */
+typedef struct ItemIdData
+{
+	unsigned	lp_off:15,		/* offset to tuple (from start of page) */
+				lp_flags:2,		/* state of item pointer, see below */
+				lp_len:15;		/* byte length of tuple */
+} ItemIdData;
+
+#define LP_UNUSED		0		/* unused (should always have lp_len=0) */
+#define LP_NORMAL		1		/* used (should always have lp_len>0) */
+#define LP_REDIRECT		2		/* HOT redirect (should have lp_len=0) */
+#define LP_DEAD			3		/* dead, may or may not have storage */
+
+#define ItemIdGetOffset(itemId)		((itemId)->lp_off)
+#define ItemIdGetLength(itemId)		((itemId)->lp_len)
+#define ItemIdIsUsed(itemId)		((itemId)->lp_flags != LP_UNUSED)
+#define ItemIdIsNormal(itemId)		((itemId)->lp_flags == LP_NORMAL)
+#define ItemIdIsRedirected(itemId)	((itemId)->lp_flags == LP_REDIRECT)
+#define ItemIdIsDead(itemId)		((itemId)->lp_flags == LP_DEAD)
+#define ItemIdHasStorage(itemId)	((itemId)->lp_len != 0)
+#define ItemIdSetUnused(itemId)			\
+    do {								\
+		(itemId)->lp_flags = LP_UNUSED; \
+		(itemId)->lp_off = 0;           \
+		(itemId)->lp_len = 0;           \
+	} while(0)
+
+/* definitions in storage/off.h */
+typedef uint16_t			OffsetNumber;
+#define InvalidOffsetNumber	((OffsetNumber) 0)
+#define FirstOffsetNumber	((OffsetNumber) 1)
+#define MaxOffsetNumber		((OffsetNumber) (BLCKSZ / sizeof(ItemIdData)))
+#define OffsetNumberNext(offsetNumber)			\
+	((OffsetNumber) (1 + (offsetNumber)))
+#define OffsetNumberPrev(offsetNumber)			\
+	((OffsetNumber) (-1 + (offsetNumber)))
+
+/* definitions in storage/bufpage.h */
+typedef struct PageHeaderData
+{
+#if 0
+	/*
+	 * NOTE: device code (ab-)uses this field to track parent block/item
+	 * when GiST index is loaded. Without this hack, hard to implement
+	 * depth-first search at GpuJoin.
+	 */
+	PageXLogRecPtr pd_lsn;		/* LSN: next byte after last byte of xlog
+								 * record for last change to this page */
+#else
+	uint32_t	pd_parent_blkno;
+	uint32_t	pd_parent_item;
+#endif
+	uint16_t	pd_checksum;	/* checksum */
+	uint16_t	pd_flags;		/* flag bits, see below */
+	uint16_t	pd_lower;		/* offset to start of free space */
+	uint16_t	pd_upper;		/* offset to end of free space */
+	uint16_t	pd_special;		/* offset to start of special space */
+	uint16_t	pd_pagesize_version;
+	TransactionId pd_prune_xid;	/* oldest prunable XID, or zero if none */
+	ItemIdData	pd_linp[1];		/* line pointer array */
+} PageHeaderData;
+
+#define SizeOfPageHeaderData	(offsetof(PageHeaderData, pd_linp))
+#define PageGetItemId(page, offsetNumber)			\
+	(&((PageHeaderData *)(page))->pd_linp[(offsetNumber) - 1])
+#define PageGetItem(page, lpp)						\
+	((HeapTupleHeaderData *)((char *)(page) + ItemIdGetOffset(lpp)))
+#define PageGetMaxOffsetNumber(page)				\
+	(((PageHeaderData *) (page))->pd_lower <= SizeOfPageHeaderData ? 0 :	\
+	 ((((PageHeaderData *) (page))->pd_lower - SizeOfPageHeaderData)		\
+	  / sizeof(ItemIdData)))
+#define PD_HAS_FREE_LINES	0x0001	/* are there any unused line pointers? */
+#define PD_PAGE_FULL		0x0002	/* not enough free space for new tuple? */
+#define PD_ALL_VISIBLE		0x0004	/* all tuples on page are visible to
+									 * everyone */
+#define PD_VALID_FLAG_BITS	0x0007	/* OR of all valid pd_flags bits */
+
+/*
+ * GiST index specific structures and labels
+ */
+#define F_LEAF              (1 << 0)    /* leaf page */
+#define F_DELETED           (1 << 1)    /* the page has been deleted */
+#define F_TUPLES_DELETED    (1 << 2)    /* some tuples on the page were deleted */
+#define F_FOLLOW_RIGHT      (1 << 3)    /* page to the right has no downlink */
+#define F_HAS_GARBAGE       (1 << 4)    /* some tuples on the page are dead */
+
+#define GIST_PAGE_ID        0xFF81
+
+typedef struct GISTPageOpaqueData
+{
+	struct {
+		uint32_t	xlogid;
+		uint32_t	xrecoff;
+	} nsn;
+	BlockNumber		rightlink;		/* next page if any */
+	uint16_t		flags;			/* see bit definitions above */
+	uint16_t		gist_page_id;	/* for identification of GiST indexes */
+} GISTPageOpaqueData;
+
+INLINE_FUNCTION(GISTPageOpaqueData *)
+GistPageGetOpaque(PageHeaderData *page)
+{
+	return (GISTPageOpaqueData *)((char *)page + page->pd_special);
+}
+
+INLINE_FUNCTION(bool)
+GistPageIsLeaf(PageHeaderData *page)
+{
+	return (GistPageGetOpaque(page)->flags & F_LEAF) != 0;
+}
+
+INLINE_FUNCTION(bool)
+GistPageIsDeleted(PageHeaderData *page)
+{
+	return (GistPageGetOpaque(page)->flags & F_DELETED) != 0;
+}
+
+INLINE_FUNCTION(bool)
+GistFollowRight(PageHeaderData *page)
+{
+	return (GistPageGetOpaque(page)->flags & F_FOLLOW_RIGHT) != 0;
+}
+/* root page of a gist index */
+#define GIST_ROOT_BLKNO			0
+
+#endif /* POSTGRES_H */
+
+/*
+ * Definition of KDS-Items and related
+ */
 struct kern_tupitem
 {
 	uint32_t		t_len;		/* length of tuple */
@@ -390,20 +673,251 @@ struct kern_hashitem
 };
 typedef struct kern_hashitem	kern_hashitem;
 
+/* Length of the header postion of kern_data_store */
+INLINE_FUNCTION(size_t)
+KDS_HEAD_LENGTH(kern_data_store *kds)
+{
+	return MAXALIGN(offsetof(kern_data_store, colmeta[kds->nr_colmeta]));
+}
+
+/* Base address of the kern_data_store */
+INLINE_FUNCTION(char *)
+KDS_BODY_ADDR(kern_data_store *kds)
+{
+	return (char *)kds + KDS_HEAD_LENGTH(kds);
+}
+
+/* access functions for KDS_FORMAT_ROW/HASH */
+INLINE_FUNCTION(uint32_t *)
+KDS_GET_ROWINDEX(kern_data_store *kds)
+{
+	Assert(kds->format == KDS_FORMAT_ROW ||
+		   kds->format == KDS_FORMAT_HASH);
+	return (uint32_t *)KDS_BODY_ADDR(kds);
+}
+
+/* kern_tupitem by kds_index */
+INLINE_FUNCTION(kern_tupitem *)
+KDS_GET_TUPITEM(kern_data_store *kds, uint32_t kds_index)
+{
+	uint32_t	offset = KDS_GET_ROWINDEX(kds)[kds_index];
+
+	if (!offset)
+		return NULL;
+	return (kern_tupitem *)((char *)kds + __kds_unpack(offset));
+}
+
+/* kern_tupitem by tuple-offset */
+INLINE_FUNCTION(HeapTupleHeaderData *)
+KDS_FETCH_TUPITEM(kern_data_store *kds,
+				  uint32_t tuple_offset,
+				  ItemPointerData *p_self,
+				  uint32_t *p_len)
+{
+	kern_tupitem   *tupitem;
+
+	Assert(kds->format == KDS_FORMAT_ROW ||
+		   kds->format == KDS_FORMAT_HASH);
+	if (tuple_offset == 0)
+		return NULL;
+	tupitem = (kern_tupitem *)((char *)kds
+							   + __kds_unpack(tuple_offset)
+							   - offsetof(kern_tupitem, htup));
+	if (p_self)
+		*p_self = tupitem->htup.t_ctid;
+	if (p_len)
+		*p_len = tupitem->t_len;
+	return &tupitem->htup;
+}
+
+INLINE_FUNCTION(uint32_t *)
+KDS_GET_HASHSLOT(kern_data_store *kds)
+{
+	Assert(kds->format == KDS_FORMAT_HASH);
+	return (uint32_t *)(KDS_BODY_ADDR(kds) +
+						MAXALIGN(sizeof(uint32_t) * kds->nrooms));
+}
+
+INLINE_FUNCTION(kern_hashitem *)
+KDS_HASH_FIRST_ITEM(kern_data_store *kds, uint32_t hash)
+{
+    uint32_t   *slot = KDS_GET_HASHSLOT(kds);
+	size_t		offset = __kds_unpack(slot[hash % kds->nslots]);
+
+	if (offset == 0)
+		return NULL;
+	Assert(offset < kds->length);
+	return (kern_hashitem *)((char *)kds + offset);
+}
+
+INLINE_FUNCTION(kern_hashitem *)
+KDS_HASH_NEXT_ITEM(kern_data_store *kds, kern_hashitem *khitem)
+{
+	size_t      offset;
+
+	if (!khitem || khitem->next == 0)
+		return NULL;
+	offset = __kds_unpack(khitem->next);
+	Assert(offset < kds->length);
+	return (kern_hashitem *)((char *)kds + offset);
+}
+
+/* access macros for KDS_FORMAT_BLOCK */
+#if 0
+//Only GPU?
+#define KERN_DATA_STORE_PARTSZ(kds)             \
+    Min(((kds)->nrows_per_block +               \
+         warpSize - 1) & ~(warpSize - 1),       \
+        get_local_size())
+#endif
+#define KDS_BLOCK_BLCKNR(kds,block_id)				\
+	(((BlockNumber *)KDS_BODY_ADDR(kds))[block_id])
+#define KDS_BLOCK_PGPAGE(kds,block_id)					\
+	((struct PageHeaderData *)							\
+	 (KDS_BODY_ADDR(kds) +								\
+	  MAXALIGN(sizeof(BlockNumber) * (kds)->nrooms) +	\
+      BLCKSZ * block_id))
+
+INLINE_FUNCTION(HeapTupleHeaderData *)
+KDS_BLOCK_REF_HTUP(kern_data_store *kds,
+				   uint32_t lp_offset,
+				   ItemPointerData *p_self,
+				   uint32_t *p_len)
+{
+	/*
+	 * NOTE: lp_offset is not packed offset!
+	 * KDS_FORMAT_BLOCK must never be larger than 4GB.
+	 */
+	ItemIdData	   *lpp = (ItemIdData *)((char *)kds + lp_offset);
+	uint32_t		head_size;
+	uint32_t		block_id;
+	BlockNumber		block_nr;
+	PageHeaderData *pg_page;
+
+	Assert(kds->format == KDS_FORMAT_BLOCK);
+	if (lp_offset == 0)
+		return NULL;
+	head_size = (KDS_HEAD_LENGTH(kds) +
+				 MAXALIGN(sizeof(BlockNumber) * kds->nrooms));
+	Assert(lp_offset >= head_size &&
+		   lp_offset <  head_size + BLCKSZ * kds->nitems);
+    block_id = (lp_offset - head_size) / BLCKSZ;
+    block_nr = KDS_BLOCK_BLCKNR(kds, block_id);
+	pg_page = KDS_BLOCK_PGPAGE(kds, block_id);
+
+	Assert(lpp >= pg_page->pd_linp &&
+		   lpp -  pg_page->pd_linp < PageGetMaxOffsetNumber(pg_page));
+	if (p_self)
+	{
+		p_self->ip_blkid.bi_hi  = block_nr >> 16;
+		p_self->ip_blkid.bi_lo  = block_nr & 0xffff;
+		p_self->ip_posid        = lpp - pg_page->pd_linp;
+	}
+	if (p_len)
+		*p_len = ItemIdGetLength(lpp);
+	return (HeapTupleHeaderData *)PageGetItem(pg_page, lpp);
+}
+
+/* access functions for apache arrow format */
+INLINE_FUNCTION(void *)
+KDS_ARROW_REF_SIMPLE_DATUM(kern_data_store *kds,
+						   kern_colmeta *cmeta,
+						   uint32_t index,
+						   uint32_t unitsz)
+{
+	uint8_t	   *nullmap;
+	char	   *values;
+
+	Assert(cmeta >= &kds->colmeta[0] &&
+		   cmeta <= &kds->colmeta[kds->nr_colmeta - 1]);
+	if (cmeta->nullmap_offset)
+	{
+		nullmap = (uint8_t *)kds + __kds_unpack(cmeta->nullmap_offset);
+		if (att_isnull(index, nullmap))
+			return NULL;
+	}
+	Assert(cmeta->values_offset > 0);
+	Assert(cmeta->extra_offset == 0);
+	Assert(cmeta->extra_length == 0);
+	Assert(unitsz * (index+1) <= __kds_unpack(cmeta->values_length));
+	values = (char *)kds + __kds_unpack(cmeta->values_offset);
+	return values + unitsz * index;
+}
+
+INLINE_FUNCTION(void *)
+KDS_ARROW_REF_VARLENA_DATUM(kern_data_store *kds,
+							kern_colmeta *cmeta,
+							uint32_t index,
+							uint32_t *p_length)
+{
+	uint8_t	   *nullmap;
+	uint32_t   *offset;
+	char	   *extra;
+
+	Assert(cmeta >= &kds->colmeta[0] &&
+		   cmeta <= &kds->colmeta[kds->nr_colmeta - 1]);
+	if (cmeta->nullmap_offset)
+	{
+		nullmap = (uint8_t *)kds + __kds_unpack(cmeta->nullmap_offset);
+		if (att_isnull(index, nullmap))
+			return NULL;
+	}
+	Assert(cmeta->values_offset > 0 &&
+		   cmeta->extra_offset > 0 &&
+		   sizeof(uint32_t) * (index+1) <= __kds_unpack(cmeta->values_length));
+	offset = (uint32_t *)(kds + __kds_unpack(cmeta->values_length));
+	extra = (char *)kds + __kds_unpack(cmeta->extra_offset);
+
+	Assert(offset[index]   <= offset[index+1] &&
+		   offset[index+1] <= __kds_unpack(cmeta->extra_length));
+	*p_length = offset[index+1] - offset[index];
+	return (extra + offset[index]);	
+}
+
 /*
- * Varlena definitions
+ * kern_parambuf
+ *
+ * Const and Parameter buffer. It stores constant values and system state
+ * properties immutable during the query execution.
+ */
+struct kern_parambuf
+{
+	uint64_t	xactStartTimestamp;	/* timestamp when transaction start */
+	uint32_t	xactIdVector;		/* offset to xidvector */
+
+	/* variable length parameters / constants */
+	uint32_t	length;		/* total length of parambuf */
+	uint32_t	nparams;	/* number of parameters */
+	uint32_t	poffset[1];	/* offset of params */
+};
+typedef struct kern_parambuf	kern_parambuf;
+
+INLINE_FUNCTION(void *)
+kparam_get_value(kern_parambuf *kparams, uint32_t pindex)
+{
+	if (pindex >= kparams->nparams)
+		return NULL;
+	if (kparams->poffset[pindex] == 0)
+		return NULL;
+	return (char *)kparams + kparams->poffset[pindex];
+}
+
+/* ----------------------------------------------------------------
+ *
+ * Definitions of Varlena datum and related (mostly in postgres.h and c.h)
+ *
+ * ----------------------------------------------------------------
  */
 typedef struct varlena		varlena;
-#ifndef VARHDRSZ
+#ifndef POSTGRES_H
 struct varlena {
     char		vl_len_[4];	/* Do not touch this field directly! */
 	char		vl_dat[1];
 };
 
-#define VARHDRSZ			((int) sizeof(cl_int))
+#define VARHDRSZ			((int) sizeof(uint32_t))
 #define VARDATA(PTR)		VARDATA_4B(PTR)
 #define VARSIZE(PTR)		VARSIZE_4B(PTR)
-#define VARSIZE_EXHDR(PTR)	(VARSIZE(PTR) - VARHDRSZ)
 
 #define VARSIZE_SHORT(PTR)	VARSIZE_1B(PTR)
 #define VARDATA_SHORT(PTR)	VARDATA_1B(PTR)
@@ -418,7 +932,8 @@ typedef union
 	struct						/* Compressed-in-line format */
 	{
 		uint32_t	va_header;
-		uint32_t	va_rawsize;	/* Original data size (excludes header) */
+		uint32_t	va_tcinfo;	/* Original data size (excludes header) and
+								 * compression method; see va_extinfo */
 		char		va_data[1];	/* Compressed data */
 	}		va_compressed;
 } varattrib_4b;
@@ -479,7 +994,7 @@ typedef struct toast_compress_header
 								 * external size; see va_extinfo */
 } toast_compress_header;
 
-#define TOAST_COMPRESS_HDRSZ        ((cl_int)sizeof(toast_compress_header))
+#define TOAST_COMPRESS_HDRSZ        ((uint32_t)sizeof(toast_compress_header))
 #define TOAST_COMPRESS_RAWSIZE(ptr)             \
     (((toast_compress_header *) (ptr))->rawsize)
 #define TOAST_COMPRESS_RAWDATA(ptr)             \
@@ -506,7 +1021,7 @@ typedef struct toast_compress_header
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_INDIRECT)
 #define VARATT_IS_SHORT(PTR)			VARATT_IS_1B(PTR)
 #define VARATT_IS_EXTENDED(PTR)			(!VARATT_IS_4B_U(PTR))
-#define VARATT_NOT_PAD_BYTE(PTR)		(*((cl_uchar *) (PTR)) != 0)
+#define VARATT_NOT_PAD_BYTE(PTR)		(*((uint8_t *) (PTR)) != 0)
 
 #define VARSIZE_4B(PTR)                     \
 	((__Fetch(&((varattrib_4b *)(PTR))->va_4byte.va_header)>>2) & 0x3FFFFFFF)
@@ -535,6 +1050,14 @@ typedef struct toast_compress_header
 
 #define SET_VARSIZE(PTR, len)                       \
 	(((varattrib_4b *)(PTR))->va_4byte.va_header = (((uint32_t) (len)) << 2))
-#endif	/* VARHDRSZ */
+#endif	/* POSTGRES_H */
+
+/*
+ * common XPU functions
+ */
+PUBLIC_FUNCTION(uint32_t)
+pg_hash_any(const unsigned char *ptr, int sz);
+
+
 
 #endif	/* XPU_COMMON_H */
