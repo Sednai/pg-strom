@@ -32,6 +32,28 @@ pgstrom_githash(PG_FUNCTION_ARGS)
 }
 
 /*
+ * pg_kern_ereport - raise an ereport at host side
+ */
+void
+pg_kern_ereport(kern_context *kcxt)
+{
+	ereport(ERROR, (errcode(kcxt->errcode),
+					errmsg("%s:%u  %s",
+						   kcxt->error_filename,
+						   kcxt->error_lineno,
+						   kcxt->error_message)));
+}
+
+/*
+ * pg_hash_any - the standard hash function at device code
+ */
+uint32_t
+pg_hash_any(const void *ptr, int sz)
+{
+	return (uint32_t)hash_any((const unsigned char *)ptr, sz);
+}
+
+/*
  * _PG_init
  *
  * Main entrypoint of PG-Strom. It shall be invoked only once when postmaster

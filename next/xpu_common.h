@@ -154,19 +154,16 @@ typedef struct
 	char		vlbuf[1];
 } kern_context;
 
-#define DECL_KERNEL_CONTEXT(NAME,BUFSZ)					\
-	union {												\
-		kern_context kcxt;								\
-		char __dummy__[offsetof(kern_context, vlbuf) +	\
-					   MAXALIGN(BUFSZ+1)]				\
-	} NAME
-#define INIT_KERNEL_CONTEXT(kcxt,__kparams,__bufsz)		\
-	do {												\
-		memset(kcxt, 0, offsetof(kern_context, vlbuf));	\
-		(kcxt)->kparams = (__kparams);					\
-		(kcxt)->vlpos = (kcxt)->vlbuf;					\
-		(kcxt)->vlend = (kcxt)->vlbuf + (__bufsz);		\
-	} while(0)
+#define DECL_KERNEL_CONTEXT(NAME,KPARAMS,BUFSZ)				\
+	union {													\
+		kern_context kcxt;									\
+		char __dummy__[offsetof(kern_context, vlbuf) +		\
+					   MAXALIGN(BUFSZ+1)];					\
+	} NAME;													\
+	memset(&NAME.kcxt, 0, offsetof(kern_context, vlbuf));	\
+	NAME.kcxt.kparams = (KPARAMS);							\
+	NAME.kcxt.vlpos = NAME.kcxt.vlbuf;						\
+	NAME.kcxt.vlend = NAME.kcxt.vlbuf + (BUFSZ)
 
 INLINE_FUNCTION(void *)
 kcxt_alloc(kern_context *kcxt, size_t len)
@@ -1089,8 +1086,10 @@ typedef struct toast_compress_header
 	extern int sql_##NAME##_datum_store(kern_context *kcxt,			\
 										char *buffer,				\
 										sql_##NAME##_t *datum);		\
-	extern uint32_t sql_##NAME##_hash(kern_context *kcxt,			\
-									  sql_##NAME##_t *datum);
+	extern bool sql_##NAME##_hash(kern_context *kcxt,				\
+								  uint32_t *p_hash,					\
+								  sql_##NAME##_t *datum);			\
+	extern uint32_t devtype_##NAME##_hash(bool isnull, Datum value);
 
 #define PGSTROM_SIMPLE_DEVTYPE_DECLARATION(NAME,BASETYPE)			\
 	__PGSTROM_DEVTYPE_SIMPLE_DECLARATION(NAME,BASETYPE)				\
@@ -1150,7 +1149,9 @@ __PGSTROM_DEVTYPE_FUNCTION_DECLARATION(composite)
  *
  * ----------------------------------------------------------------
  */
+PUBLIC_FUNCTION(void)
+pg_kern_ereport(kern_context *kcxt);	/* only host code */
 PUBLIC_FUNCTION(uint32_t)
-pg_hash_any(const unsigned char *ptr, int sz);
+pg_hash_any(const void *ptr, int sz);
 
 #endif	/* XPU_COMMON_H */

@@ -12,6 +12,24 @@
 #ifndef XPU_BASETYPE_H
 #define XPU_BASETYPE_H
 
+#ifdef __STROM_HOST__
+#define PGSTROM_SIMPLE_DEVTYPE_HASH_TEMPLATE(NAME,BASETYPE)		\
+	PUBLIC_FUNCTION(uint32_t)									\
+	devtype_##NAME##_hash(bool isnull, Datum value)				\
+	{															\
+	    sql_##NAME##_t	temp;									\
+		uint32_t		hash;									\
+		DECL_KERNEL_CONTEXT(u,NULL,0);							\
+		if (!sql_##NAME##_datum_ref(&u.kcxt, &temp,				\
+									isnull ? NULL : &value) ||	\
+			!sql_##NAME##_hash(&u.kcxt, &hash, &temp))			\
+			pg_kern_ereport(&u.kcxt);							\
+		return hash;											\
+	}
+#else
+#define PGSTROM_SIMPLE_DEVTYPE_HASH_TEMPLATE(NAME,BASETYPE)
+#endif	/* __STROM_HOST__ */
+
 #define PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(NAME,BASETYPE)				\
 	PUBLIC_FUNCTION(bool)											\
 	sql_##NAME##_datum_ref(kern_context *kcxt,						\
@@ -60,15 +78,24 @@
 			*((BASETYPE *)buffer) = datum->value;					\
 		return sizeof(BASETYPE);									\
 	}																\
-	PUBLIC_FUNCTION(uint32_t)										\
-	sql_##NAME##_hash(kern_context *kcxt, sql_##NAME##_t *datum)	\
+	PUBLIC_FUNCTION(bool)											\
+	sql_##NAME##_hash(kern_context *kcxt,							\
+						  uint32_t *p_hash,							\
+						  sql_##NAME##_t *datum)					\
 	{																\
 		if (datum->isnull)											\
-			return 0;												\
-		return pg_hash_any((unsigned char *)&datum->value,			\
-						   sizeof(BASETYPE));						\
-	}
+			*p_hash = 0;											\
+		else														\
+			*p_hash = pg_hash_any(&datum->value,					\
+								  sizeof(BASETYPE));				\
+		return true;												\
+	}																\
+	PGSTROM_SIMPLE_DEVTYPE_HASH_TEMPLATE(NAME,BASETYPE)
 
+/*
+ * MEMO: <stdbool.h> defines "bool" as an alias of _Bool. It leads an adversed
+ * effect when ##NAME## is replaced.
+ */
 typedef struct {
 	int8_t		value;
 	bool		isnull;

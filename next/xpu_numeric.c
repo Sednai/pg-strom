@@ -325,12 +325,30 @@ sql_numeric_datum_store(kern_context *kcxt,
 	return sql_numeric_to_varlena(buffer, datum->weight, datum->value);
 }
 
-PUBLIC_FUNCTION(uint32_t)
+PUBLIC_FUNCTION(bool)
 sql_numeric_hash(kern_context *kcxt,
+				 uint32_t *p_hash,
 				 sql_numeric_t *datum)
 {
 	if (datum->isnull)
-		return 0;
-	return pg_hash_any((unsigned char *)&datum->value,
-					   offsetof(sql_numeric_t, weight) + sizeof(int16_t));
+		*p_hash = 0;
+	else
+		*p_hash = pg_hash_any(&datum->value,
+							  offsetof(sql_numeric_t,
+									   weight) + sizeof(int16_t));
+	return true;
+}
+
+PUBLIC_FUNCTION(uint32_t)
+devtype_numeric_hash(bool isnull, Datum value)
+{
+	sql_numeric_t	temp;
+	uint32_t		hash;
+	DECL_KERNEL_CONTEXT(u,NULL,0);
+
+	if (!sql_numeric_datum_ref(&u.kcxt, &temp,
+							   isnull ? NULL : DatumGetPointer(value)) ||
+		!sql_numeric_hash(&u.kcxt, &hash, &temp))
+		pg_kern_ereport(&u.kcxt);
+	return hash;
 }

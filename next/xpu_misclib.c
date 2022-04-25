@@ -85,12 +85,29 @@ sql_uuid_datum_store(kern_context *kcxt,
 	return UUID_LEN;
 }
 
-PUBLIC_FUNCTION(uint32_t)
-sql_uuid_hash(kern_context *kcxt, sql_uuid_t *datum)
+PUBLIC_FUNCTION(bool)
+sql_uuid_hash(kern_context *kcxt,
+			  uint32_t *p_hash,
+			  sql_uuid_t *datum)
 {
 	if (datum->isnull)
-		return 0;
-	return pg_hash_any((unsigned char *)datum->value.data, UUID_LEN);
+		*p_hash = 0;
+	else
+		*p_hash = pg_hash_any(datum->value.data, UUID_LEN);
+	return true;
+}
+
+PUBLIC_FUNCTION(uint32_t)
+devtype_uuid_hash(bool isnull, Datum value)
+{
+	sql_uuid_t	temp;
+	uint32_t	hash;
+	DECL_KERNEL_CONTEXT(u,NULL,0);
+	if (!sql_uuid_datum_ref(&u.kcxt, &temp,
+                            isnull ? NULL : DatumGetPointer(value)) ||
+		!sql_uuid_hash(&u.kcxt, &hash, &temp))
+		pg_kern_ereport(&u.kcxt);
+	return hash;
 }
 
 /*
@@ -161,12 +178,29 @@ sql_macaddr_datum_store(kern_context *kcxt,
 	return sizeof(macaddr);
 }
 
-PUBLIC_FUNCTION(uint32_t)
-sql_macaddr_hash(kern_context *kcxt, sql_macaddr_t *datum)
+PUBLIC_FUNCTION(bool)
+sql_macaddr_hash(kern_context *kcxt,
+				 uint32_t *p_hash,
+				 sql_macaddr_t *datum)
 {
 	if (datum->isnull)
-		return 0;
-	return pg_hash_any((unsigned char *)&datum->value, sizeof(macaddr));
+		*p_hash = 0;
+	else
+		*p_hash = pg_hash_any(&datum->value, sizeof(macaddr));
+	return true;
+}
+
+PUBLIC_FUNCTION(uint32_t)
+devtype_macaddr_hash(bool isnull, Datum value)
+{
+	sql_macaddr_t temp;
+	uint32_t	hash;
+	DECL_KERNEL_CONTEXT(u,NULL,0);
+	if (!sql_macaddr_datum_ref(&u.kcxt, &temp,
+							   isnull ? NULL : DatumGetPointer(value)) ||
+		!sql_macaddr_hash(&u.kcxt, &hash, &temp))
+		pg_kern_ereport(&u.kcxt);
+	return hash;
 }
 
 /*
@@ -274,21 +308,36 @@ sql_inet_datum_store(kern_context *kcxt,
 	return len + VARHDRSZ;
 }
 
-PUBLIC_FUNCTION(uint32_t)
-sql_inet_hash(kern_context *kcxt, sql_inet_t *datum)
+PUBLIC_FUNCTION(bool)
+sql_inet_hash(kern_context *kcxt,
+			  uint32_t *p_hash,
+			  sql_inet_t *datum)
 {
-	uint32_t	len;
-
 	if (datum->isnull)
-		return 0;
-	if (datum->value.family == PGSQL_AF_INET)
-		len = offsetof(inet_struct, ipaddr) + 4;	/* IPv4 */
+		*p_hash = 0;
+	else if (datum->value.family == PGSQL_AF_INET)
+		*p_hash = pg_hash_any(&datum->value,		/* IPv4 */
+							  offsetof(inet_struct, ipaddr[4]));
 	else if (datum->value.family == PGSQL_AF_INET6)
-		len = offsetof(inet_struct, ipaddr) + 16;	/* IPv6 */
+		*p_hash = pg_hash_any(&datum->value,		/* IPv6 */
+							  offsetof(inet_struct, ipaddr[16]));
 	else
 	{
 		STROM_ELOG(kcxt, "sql_inet_t has unknown IP version");
-		return 0;
+		return false;
 	}
-	return pg_hash_any((unsigned char *)&datum->value, len);
+	return true;
+}
+
+PUBLIC_FUNCTION(uint32_t)
+devtype_inet_hash(bool isnull, Datum value)
+{
+	sql_inet_t temp;
+	uint32_t	hash;
+	DECL_KERNEL_CONTEXT(u,NULL,0);
+	if (!sql_inet_datum_ref(&u.kcxt, &temp,
+							isnull ? NULL : DatumGetPointer(value)) ||
+		!sql_inet_hash(&u.kcxt, &hash, &temp))
+		pg_kern_ereport(&u.kcxt);
+	return hash;
 }

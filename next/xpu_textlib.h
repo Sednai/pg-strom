@@ -18,15 +18,14 @@
 						   sql_##NAME##_t *result,						\
 						   void *addr)									\
 	{																	\
-		memset(result, 0, sizeof(sql_##NAME##_t));						\
-		if (addr)														\
+		if (!addr)														\
+			result->isnull = true;										\
+		else															\
 		{																\
 			result->isnull = false;										\
 			result->length = -1;										\
 			result->value = addr;										\
-			return VARSIZE_ANY(addr);									\
 		}																\
-		result->isnull = true;											\
 		return true;													\
 	}																	\
 	PUBLIC_FUNCTION(bool)												\
@@ -49,13 +48,13 @@
 		uint32_t	len;												\
 																		\
 		addr = KDS_ARROW_REF_VARLENA_DATUM(kds, cmeta, rowidx, &len);	\
-		memset(result, 0, sizeof(sql_##NAME##_t));						\
 		if (!addr)														\
 			result->isnull = true;										\
 		else															\
 		{																\
-			result->value = addr;										\
+			result->isnull = false;										\
 			result->length = len;										\
+			result->value  = addr;										\
 		}																\
 		return true;													\
 	}																	\
@@ -81,31 +80,31 @@
 		}																\
 		if (buffer)														\
 		{																\
-			if (len > 0)												\
-				memcpy(buffer + VARHDRSZ, data, len);					\
+			memcpy(buffer + VARHDRSZ, data, len);						\
 			SET_VARSIZE(buffer, len + VARHDRSZ);						\
 		}																\
-		return len + VARHDRSZ;											\
+		 return len + VARHDRSZ;											\
 	}																	\
-	uint32_t															\
-	sql_##NAME##_hash(kern_context*kcxt, sql_##NAME##_t*datum)			\
+	bool																\
+	sql_##NAME##_hash(kern_context*kcxt,								\
+					  uint32_t *p_hash,									\
+					  sql_##NAME##_t*datum)								\
 	{																	\
-		char   *data;													\
-		int		len;													\
-																		\
 		if (datum->isnull)												\
-			return 0;													\
-		if (datum->length < 0)											\
-		{																\
-			data = VARDATA_ANY(datum->value);							\
-			len = VARSIZE_ANY_EXHDR(datum->value);						\
-		}																\
+			*p_hash = 0;												\
+		else if (datum->length >= 0)									\
+			*p_hash = pg_hash_any(datum->value, datum->length);			\
+		else if (!VARATT_IS_COMPRESSED(datum->value) &&					\
+				 !VARATT_IS_EXTERNAL(datum->value))						\
+			*p_hash = pg_hash_any(VARDATA_ANY(datum->value),			\
+								  VARSIZE_ANY_EXHDR(datum->value));		\
 		else															\
 		{																\
-			data = datum->value;										\
-			len = datum->length;										\
+			STROM_CPU_FALLBACK(kcxt, ERRCODE_STROM_VARLENA_UNSUPPORTED,	\
+							   #NAME " datum is compressed or external"); \
+			return false;												\
 		}																\
-		return pg_hash_any((unsigned char *)data, len);					\
+		return true;													\
 	}
 
 PGSTROM_VARLENA_DEVTYPE_DECLARATION(bytea)
