@@ -21,6 +21,7 @@ typedef struct
     int32_t     zone;   /* numeric time zone, in seconds */
 } TimeTzADT;
 #endif /* DATE_H */
+
 #ifndef DATATYPE_TIMESTAMP_H
 typedef int64_t         Timestamp;
 typedef int64_t         TimestampTz;
@@ -35,16 +36,11 @@ typedef struct
 } Interval;
 #endif /* DATATYPE_TIMESTAMP_H */
 
-
-#ifdef PGSTROM_SIMPLE_DEVTYPE_TEMPLATE
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(date, DateADT)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(time, TimeADT)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(timetz, TimeTzADT)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(timestamp, Timestamp)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(timestamptz, TimestampTz)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(interval, Interval)
-#endif	/* PGSTROM_SIMPLE_DEVTYPE_TEMPLATE */
-
-
+PGSTROM_SIMPLE_DEVTYPE_DECLARATION(date, DateADT)
+PGSTROM_SIMPLE_DEVTYPE_DECLARATION(time, TimeADT)
+PGSTROM_SIMPLE_DEVTYPE_DECLARATION(timetz, TimeTzADT)
+PGSTROM_SIMPLE_DEVTYPE_DECLARATION(timestamp, Timestamp)
+PGSTROM_SIMPLE_DEVTYPE_DECLARATION(timestamptz, TimestampTz)
+PGSTROM_SIMPLE_DEVTYPE_DECLARATION(interval, Interval)
 
 #endif  /* XPU_TIMELIB_H */

@@ -10,7 +10,58 @@
  * it under the terms of the PostgreSQL License.
  *
  */
-#include "xpu_devtypes.h"
+#include "xpu_common.h"
+
+/* PostgreSQL numeric data type */
+#if 0
+#define PG_DEC_DIGITS		1
+#define PG_NBASE			10
+typedef int8_t		NumericDigit;
+#endif
+
+#if 0
+#define PG_DEC_DIGITS		2
+#define PG_NBASE			100
+typedef int8_t		NumericDigit;
+#endif
+
+#if 1
+#define PG_DEC_DIGITS		4
+#define PG_NBASE			10000
+typedef int16_t	NumericDigit;
+#endif
+
+#define PG_MAX_DIGITS		40	/* Max digits of 128bit integer */
+#define PG_MAX_DATA			(PG_MAX_DIGITS / PG_DEC_DIGITS)
+
+struct NumericShort
+{
+	uint16_t		n_header;				/* Sign + display scale + weight */
+	NumericDigit	n_data[PG_MAX_DATA];	/* Digits */
+};
+typedef struct NumericShort	NumericShort;
+
+struct NumericLong
+{
+	uint16_t		n_sign_dscale;			/* Sign + display scale */
+	int16_t			n_weight;				/* Weight of 1st digit	*/
+	NumericDigit	n_data[PG_MAX_DATA];	/* Digits */
+};
+typedef struct NumericLong	NumericLong;
+
+typedef union
+{
+	uint16_t		n_header;			/* Header word */
+	NumericLong		n_long;				/* Long form (4-byte header) */
+	NumericShort	n_short;			/* Short form (2-byte header) */
+} NumericChoice;
+
+struct NumericData
+{
+ 	uint32_t		vl_len_;		/* varlena header */
+	NumericChoice	choice;			/* payload */
+};
+typedef struct NumericData	NumericData;
 
 #define NUMERIC_SIGN_MASK	0xC000
 #define NUMERIC_POS			0x0000
@@ -93,7 +144,7 @@ NUMERIC_WEIGHT(NumericChoice *nc)
 }
 
 INLINE_FUNCTION(void)
-set_normalized_numeric(pg_numeric_t *result, int128_t value, int16_t weight)
+set_normalized_numeric(sql_numeric_t *result, int128_t value, int16_t weight)
 {
 	if (value == 0)
 		weight = 0;
@@ -110,27 +161,21 @@ set_normalized_numeric(pg_numeric_t *result, int128_t value, int16_t weight)
 	result->value = value;
 }
 
-STATIC_FUNCTION(int)
-pg_numeric_from_varlena(kern_context *kcxt,
-						pg_numeric_t *result,
-						varlena *addr)
+STATIC_FUNCTION(bool)
+sql_numeric_from_varlena(kern_context *kcxt,
+						 sql_numeric_t *result,
+						 varlena *addr)
 {
-	uint32_t	len;
+	uint32_t		len;
 
-	memset(result, 0, sizeof(pg_numeric_t));
 	if (!addr)
 	{
 		result->isnull = true;
-		return 0;
+		return true;
 	}
+
 	len = VARSIZE_ANY_EXHDR(addr);
-	if (len < sizeof(uint16_t))
-	{
-		STROM_EREPORT(kcxt, ERRCODE_DATA_CORRUPTED,
-					  "corrupted numeric header");
-		return -1;
-	}
-	if (len <= sizeof(NumericChoice))
+	if (len >= sizeof(uint16_t))
 	{
 		NumericChoice *nc = (NumericChoice *)VARDATA_ANY(addr);
 		NumericDigit *digits = NUMERIC_DIGITS(nc);
@@ -144,29 +189,32 @@ pg_numeric_from_varlena(kern_context *kcxt,
 
 			value = value * PG_NBASE + dig;
 			if (value < 0)
-				goto out_of_range;
+			{
+				STROM_EREPORT(kcxt, ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE,
+							  "numeric value is out of range");
+				return false;
+			}
 		}
 		if (NUMERIC_SIGN(nc) == NUMERIC_NEG)
 			value = -value;
 		weight = PG_DEC_DIGITS * (ndigits - weight);
 
 		set_normalized_numeric(result, value, weight);
-		return VARSIZE_ANY(addr);
+		return true;
 	}
-out_of_range:
-	STROM_CPU_FALLBACK(kcxt, ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE,
-					   "numeric value is out of range");
-	return -1;
+	STROM_EREPORT(kcxt, ERRCODE_DATA_CORRUPTED,
+				  "corrupted numeric header");
+	return false;
 }
 
-STATIC_FUNCTION(int32_t)
-pg_numeric_to_varlena(char *buffer, int16_t weight, int128_t value)
+STATIC_FUNCTION(int)
+sql_numeric_to_varlena(char *buffer, int16_t weight, int128_t value)
 {
 	NumericData	   *numData = (NumericData *)buffer;
 	NumericLong	   *numBody = &numData->choice.n_long;
 	NumericDigit	n_data[PG_MAX_DATA];
 	int				ndigits;
-	int32_t			len;
+	int				len;
 	uint16_t		n_header = (Max(weight, 0) & NUMERIC_DSCALE_MASK);
 	bool			is_negative = (value < 0);
 
@@ -224,31 +272,31 @@ pg_numeric_to_varlena(char *buffer, int16_t weight, int128_t value)
 	return len;
 }
 
-PUBLIC_FUNCTION(int)
-pg_numeric_datum_ref(kern_context *kcxt,
-					 pg_numeric_t *result,
-					 void *addr)
+PUBLIC_FUNCTION(bool)
+sql_numeric_datum_ref(kern_context *kcxt,
+					  sql_numeric_t *result,
+					  void *addr)
 {
 	Assert(result != NULL);
-	return pg_numeric_from_varlena(kcxt, result, (varlena *)addr);
+	return sql_numeric_from_varlena(kcxt, result, (varlena *)addr);
 }
 
-PUBLIC_FUNCTION(int)
-pg_numeric_param_ref(kern_context *kcxt,
-					 pg_numeric_t *result,
-					 uint32_t param_id)
+PUBLIC_FUNCTION(bool)
+sql_numeric_param_ref(kern_context *kcxt,
+					  sql_numeric_t *result,
+					  uint32_t param_id)
 {
 	void   *addr = kparam_get_value(kcxt->kparams, param_id);
 
-	return pg_numeric_from_varlena(kcxt, result, (varlena *)addr);
+	return sql_numeric_from_varlena(kcxt, result, (varlena *)addr);
 }
 
-PUBLIC_FUNCTION(int)
-pg_numeric_datum_ref_arrow(kern_context *kcxt,
-						   pg_numeric_t *result,
-						   kern_data_store *kds,
-						   kern_colmeta *cmeta,
-						   uint32_t rowidx)
+PUBLIC_FUNCTION(bool)
+arrow_numeric_datum_ref(kern_context *kcxt,
+						sql_numeric_t *result,
+						kern_data_store *kds,
+						kern_colmeta *cmeta,
+						uint32_t rowidx)
 {
 	int128_t   *addr;
 
@@ -264,25 +312,25 @@ pg_numeric_datum_ref_arrow(kern_context *kcxt,
 		 */
 		set_normalized_numeric(result, *addr, cmeta->attopts.decimal.scale);
 	}
-	return sizeof(int128_t);
+	return true;
 }
 
-PUBLIC_FUNCTION(int32_t)
-pg_numeric_datum_store(kern_context *kcxt,
-					   char *buffer,
-					   pg_numeric_t *datum)
+PUBLIC_FUNCTION(int)
+sql_numeric_datum_store(kern_context *kcxt,
+						char *buffer,
+						sql_numeric_t *datum)
 {
 	if (datum->isnull)
 		return 0;
-	return pg_numeric_to_varlena(buffer, datum->weight, datum->value);
+	return sql_numeric_to_varlena(buffer, datum->weight, datum->value);
 }
 
 PUBLIC_FUNCTION(uint32_t)
-pg_numeric_hash(kern_context *kcxt,
-				pg_numeric_t *datum)
+sql_numeric_hash(kern_context *kcxt,
+				 sql_numeric_t *datum)
 {
 	if (datum->isnull)
 		return 0;
 	return pg_hash_any((unsigned char *)&datum->value,
-					   offsetof(pg_numeric_t, weight) + sizeof(int16_t));
+					   offsetof(sql_numeric_t, weight) + sizeof(int16_t));
 }

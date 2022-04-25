@@ -1052,12 +1052,105 @@ typedef struct toast_compress_header
 	(((varattrib_4b *)(PTR))->va_4byte.va_header = (((uint32_t) (len)) << 2))
 #endif	/* POSTGRES_H */
 
+/* ----------------------------------------------------------------
+ *
+ * Definitions for device data types
+ *
+ * ----------------------------------------------------------------
+ */
+
 /*
- * common XPU functions
+ * Templates for device data types
+ */
+#define __PGSTROM_DEVTYPE_SIMPLE_DECLARATION(NAME,BASETYPE)	\
+	typedef struct {										\
+		BASETYPE	value;									\
+		bool		isnull;									\
+	} sql_##NAME##_t;
+#define __PGSTROM_DEVTYPE_VARLENA_DECLARATION(NAME)			\
+	typedef struct {										\
+		char   *value;										\
+		int		length;		/* -1, if PG varlena */			\
+		bool	isnull;										\
+	} sql_##NAME##_t;
+
+#define __PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)				\
+	extern bool sql_##NAME##_datum_ref(kern_context *kcxt,			\
+									   sql_##NAME##_t *result,		\
+									   void *addr);					\
+	extern bool sql_##NAME##_param_ref(kern_context *kcxt,			\
+									   sql_##NAME##_t *result,		\
+									   uint32_t param_id);			\
+	extern bool arrow_##NAME##_datum_ref(kern_context *kcxt,		\
+										 sql_##NAME##_t *result,	\
+										 kern_data_store *kds,		\
+										 kern_colmeta *cmeta,		\
+										 uint32_t rowidx);			\
+	extern int sql_##NAME##_datum_store(kern_context *kcxt,			\
+										char *buffer,				\
+										sql_##NAME##_t *datum);		\
+	extern uint32_t sql_##NAME##_hash(kern_context *kcxt,			\
+									  sql_##NAME##_t *datum);
+
+#define PGSTROM_SIMPLE_DEVTYPE_DECLARATION(NAME,BASETYPE)			\
+	__PGSTROM_DEVTYPE_SIMPLE_DECLARATION(NAME,BASETYPE)				\
+	__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)
+
+#define PGSTROM_VARLENA_DEVTYPE_DECLARATION(NAME)					\
+	__PGSTROM_DEVTYPE_VARLENA_DECLARATION(NAME)						\
+	__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)
+
+#include "xpu_basetype.h"
+#include "xpu_numeric.h"
+#include "xpu_textlib.h"
+#include "xpu_timelib.h"
+#include "xpu_misclib.h"
+
+/*
+ * pg_array_t - array type support
+ *
+ * NOTE: pg_array_t is designed to store both of PostgreSQL / Arrow array
+ * values. If @length < 0, it means @value points a varlena based PostgreSQL
+ * array values; which includes nitems, dimension, nullmap and so on.
+ * Elsewhere, @length means number of elements, from @start of the array on
+ * the columnar buffer by @smeta.
+ */
+typedef struct {
+	char	   *value;
+	bool		isnull;
+	int			length;
+	uint32_t	start;
+	kern_colmeta *smeta;
+} sql_array_t;
+__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(array)
+
+/*
+ * pg_composite_t - composite type support
+ *
+ * NOTE: pg_composite_t is designed to store both of PostgreSQL / Arrow composite
+ * values. If @nfields < 0, it means @value.htup points a varlena base PostgreSQL
+ * composite values. Elsewhere (@nfields >= 0), it points composite values on
+ * KDS_FORMAT_ARROW chunk. In this case, smeta[0] ... smeta[@nfields-1] describes
+ * the values array on the KDS.
+ */
+typedef struct {
+	char	   *value;
+	bool		isnull;
+	int16_t		nfields;
+	uint32_t	rowidx;
+	Oid			comp_typid;
+	int			comp_typmod;
+	kern_colmeta *smeta;
+} sql_composite_t;
+__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(composite)
+
+/* ----------------------------------------------------------------
+ *
+ * Common XPU functions
+ *
+ * ----------------------------------------------------------------
  */
 PUBLIC_FUNCTION(uint32_t)
 pg_hash_any(const unsigned char *ptr, int sz);
-
-
 
 #endif	/* XPU_COMMON_H */

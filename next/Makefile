@@ -16,7 +16,8 @@ PGSTROM_RELEASE := devel
 #
 # Source of PG-Strom host code
 #
-__XPU_COMMON_OBJS = xpu_numeric.o
+__XPU_COMMON_OBJS = xpu_basetype.o xpu_numeric.o \
+                    xpu_timelib.o xpu_textlib.o xpu_misclib.o
 
 __STROM_OBJS = main.o shmbuf.o extra.o \
                gpu_device.o \
