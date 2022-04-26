@@ -11,6 +11,9 @@
  *
  */
 #include "xpu_common.h"
+#ifndef HAVE_FLOAT2
+#include "float2.h"
+#endif
 
 /*
  * sql_bool_t functions
@@ -97,3 +100,24 @@ PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(int8,int64_t)
 PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(float2,float2_t)
 PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(float4,float4_t)
 PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(float8,float8_t)
+
+/*
+ * Primitive type cast functions
+ */
+#define XPU_SIMPLE_TYPECAST_TEMPLATE(DST,SRC,CAST)	\
+	PUBLIC_FUNCTION(bool)							\
+	pgfn_##SRC##_to_##DST##(kern_context *kcxt,		\
+							sql_##DST##_t *result,	\
+							sql_##SRC##_t *arg)		\
+	{												\
+		result->isnull = arg->isnull;				\
+		if (!result->isnull)						\
+			result->value = CAST(arg->value);		\
+		return true;								\
+	}
+
+
+
+
+
+

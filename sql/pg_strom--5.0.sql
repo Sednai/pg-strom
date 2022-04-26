@@ -22,21 +22,21 @@ CREATE FUNCTION pgstrom.license_query()
   LANGUAGE C STRICT;
 
 -- System view for device information
-CREATE TYPE pgstrom.__pgstrom_device_info AS (
+CREATE TYPE pgstrom.__gpu_device_info AS (
   device_nr     int,
   aindex        int,
   attribute     text,
   value         text
 );
-CREATE FUNCTION pgstrom.pgstrom_device_info()
-  RETURNS SETOF pgstrom.__pgstrom_device_info
-  AS 'MODULE_PATHNAME'
+CREATE FUNCTION pgstrom.gpu_device_info()
+  RETURNS SETOF pgstrom.__gpu_device_info
+  AS 'MODULE_PATHNAME','pgstrom_gpu_device_info'
   LANGUAGE C STRICT;
-CREATE VIEW pgstrom.device_info AS
-  SELECT * FROM pgstrom.pgstrom_device_info();
+CREATE VIEW pgstrom.gpu_device_info AS
+  SELECT * FROM pgstrom.gpu_device_info();
 
 -- Create a shell type with particular type-oid
-CREATE FUNCTION pgstrom.define_shell_type(name,oid,regnamespace='public')
+CREATE FUNCTION pgstrom.define_shell_type(text,oid,regnamespace='public')
   RETURNS oid
   AS 'MODULE_PATHNAME','pgstrom_define_shell_type'
   LANGUAGE C STRICT VOLATILE;
@@ -654,28 +654,28 @@ CREATE AGGREGATE pgstrom.regr_syy(float8[])
 SELECT pgstrom.define_shell_type('float2',421,'pg_catalog');
 -- instead of CREATE TYPE pg_catalog.float2;
 
-CREATE FUNCTION pgstrom.float2_in(cstring)
+CREATE FUNCTION pgstrom.float2in(cstring)
   RETURNS float2
-  AS 'MODULE_PATHNAME','pgstrom_float2_in'
+  AS 'MODULE_PATHNAME','pgstrom_float2in'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-CREATE FUNCTION pgstrom.float2_out(float2)
+CREATE FUNCTION pgstrom.float2out(float2)
   RETURNS cstring
-  AS 'MODULE_PATHNAME','pgstrom_float2_out'
+  AS 'MODULE_PATHNAME','pgstrom_float2out'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-CREATE FUNCTION pgstrom.float2_recv(internal)
+CREATE FUNCTION pgstrom.float2recv(internal)
   RETURNS float2
-  AS 'MODULE_PATHNAME','pgstrom_float2_recv'
+  AS 'MODULE_PATHNAME','pgstrom_float2recv'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-CREATE FUNCTION pgstrom.float2_send(float2)
+CREATE FUNCTION pgstrom.float2send(float2)
   RETURNS bytea
-  AS 'MODULE_PATHNAME','pgstrom_float2_send'
+  AS 'MODULE_PATHNAME','pgstrom_float2send'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 CREATE TYPE pg_catalog.float2
 (
-  input =  pgstrom.float2_in,
-  output = pgstrom.float2_out,
-  receive = pgstrom.float2_recv,
-  send = pgstrom.float2_send,
+  input =  pgstrom.float2in,
+  output = pgstrom.float2out,
+  receive = pgstrom.float2recv,
+  send = pgstrom.float2send,
   like = pg_catalog.int2
 );
 --
@@ -771,237 +771,237 @@ CREATE CAST (numeric AS float2)
 --
 -- float2 comparison operators
 --
-CREATE FUNCTION pgstrom.float2_eq(float2,float2)
+CREATE FUNCTION pgstrom.float2eq(float2,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float2_eq'
+  AS 'MODULE_PATHNAME','pgstrom_float2eq'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_ne(float2,float2)
+CREATE FUNCTION pgstrom.float2ne(float2,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float2_ne'
+  AS 'MODULE_PATHNAME','pgstrom_float2ne'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_lt(float2,float2)
+CREATE FUNCTION pgstrom.float2lt(float2,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float2_lt'
+  AS 'MODULE_PATHNAME','pgstrom_float2lt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_le(float2,float2)
+CREATE FUNCTION pgstrom.float2le(float2,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float2_le'
+  AS 'MODULE_PATHNAME','pgstrom_float2le'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_gt(float2,float2)
+CREATE FUNCTION pgstrom.float2gt(float2,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float2_gt'
+  AS 'MODULE_PATHNAME','pgstrom_float2gt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_ge(float2,float2)
+CREATE FUNCTION pgstrom.float2ge(float2,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float2_ge'
+  AS 'MODULE_PATHNAME','pgstrom_float2ge'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_cmp(float2,float2)
+CREATE FUNCTION pgstrom.float2cmp(float2,float2)
   RETURNS int
-  AS 'MODULE_PATHNAME','pgstrom_float2_cmp'
+  AS 'MODULE_PATHNAME','pgstrom_float2cmp'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_larger(float2,float2)
+CREATE FUNCTION pgstrom.float2larger(float2,float2)
   RETURNS float2
-  AS 'MODULE_PATHNAME','pgstrom_float2_larger'
+  AS 'MODULE_PATHNAME','pgstrom_float2larger'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_smaller(float2,float2)
+CREATE FUNCTION pgstrom.float2smaller(float2,float2)
   RETURNS float2
-  AS 'MODULE_PATHNAME','pgstrom_float2_smaller'
+  AS 'MODULE_PATHNAME','pgstrom_float2smaller'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_hash(float2)
+CREATE FUNCTION pgstrom.float2hash(float2)
   RETURNS int
-  AS 'MODULE_PATHNAME','pgstrom_float2_hash'
+  AS 'MODULE_PATHNAME','pgstrom_float2hash'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_eq(float4,float2)
+CREATE FUNCTION pgstrom.float42eq(float4,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float42_eq'
+  AS 'MODULE_PATHNAME','pgstrom_float42eq'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_ne(float4,float2)
+CREATE FUNCTION pgstrom.float42ne(float4,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float42_ne'
+  AS 'MODULE_PATHNAME','pgstrom_float42ne'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_lt(float4,float2)
+CREATE FUNCTION pgstrom.float42lt(float4,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float42_lt'
+  AS 'MODULE_PATHNAME','pgstrom_float42lt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_le(float4,float2)
+CREATE FUNCTION pgstrom.float42le(float4,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float42_le'
+  AS 'MODULE_PATHNAME','pgstrom_float42le'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_gt(float4,float2)
+CREATE FUNCTION pgstrom.float42gt(float4,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float42_gt'
+  AS 'MODULE_PATHNAME','pgstrom_float42gt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_ge(float4,float2)
+CREATE FUNCTION pgstrom.float42ge(float4,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float42_ge'
+  AS 'MODULE_PATHNAME','pgstrom_float42ge'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_cmp(float4,float2)
+CREATE FUNCTION pgstrom.float42cmp(float4,float2)
   RETURNS int
-  AS 'MODULE_PATHNAME','pgstrom_float42_cmp'
+  AS 'MODULE_PATHNAME','pgstrom_float42cmp'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 
-CREATE FUNCTION pgstrom.float82_eq(float8,float2)
+CREATE FUNCTION pgstrom.float82eq(float8,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float82_eq'
+  AS 'MODULE_PATHNAME','pgstrom_float82eq'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_ne(float8,float2)
+CREATE FUNCTION pgstrom.float82ne(float8,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float82_ne'
+  AS 'MODULE_PATHNAME','pgstrom_float82ne'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_lt(float8,float2)
+CREATE FUNCTION pgstrom.float82lt(float8,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float82_lt'
+  AS 'MODULE_PATHNAME','pgstrom_float82lt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_le(float8,float2)
+CREATE FUNCTION pgstrom.float82le(float8,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float82_le'
+  AS 'MODULE_PATHNAME','pgstrom_float82le'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_gt(float8,float2)
+CREATE FUNCTION pgstrom.float82gt(float8,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float82_gt'
+  AS 'MODULE_PATHNAME','pgstrom_float82gt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_ge(float8,float2)
+CREATE FUNCTION pgstrom.float82ge(float8,float2)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float82_ge'
+  AS 'MODULE_PATHNAME','pgstrom_float82ge'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_cmp(float8,float2)
+CREATE FUNCTION pgstrom.float82cmp(float8,float2)
   RETURNS int
-  AS 'MODULE_PATHNAME','pgstrom_float82_cmp'
+  AS 'MODULE_PATHNAME','pgstrom_float82cmp'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 
-CREATE FUNCTION pgstrom.float24_eq(float2,float4)
+CREATE FUNCTION pgstrom.float24eq(float2,float4)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float24_eq'
+  AS 'MODULE_PATHNAME','pgstrom_float24eq'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_ne(float2,float4)
+CREATE FUNCTION pgstrom.float24ne(float2,float4)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float24_ne'
+  AS 'MODULE_PATHNAME','pgstrom_float24ne'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_lt(float2,float4)
+CREATE FUNCTION pgstrom.float24lt(float2,float4)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float24_lt'
+  AS 'MODULE_PATHNAME','pgstrom_float24lt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_le(float2,float4)
+CREATE FUNCTION pgstrom.float24le(float2,float4)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float24_le'
+  AS 'MODULE_PATHNAME','pgstrom_float24le'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_gt(float2,float4)
+CREATE FUNCTION pgstrom.float24gt(float2,float4)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float24_gt'
+  AS 'MODULE_PATHNAME','pgstrom_float24gt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_ge(float2,float4)
+CREATE FUNCTION pgstrom.float24ge(float2,float4)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float24_ge'
+  AS 'MODULE_PATHNAME','pgstrom_float24ge'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_cmp(float2,float4)
+CREATE FUNCTION pgstrom.float24cmp(float2,float4)
   RETURNS int
-  AS 'MODULE_PATHNAME','pgstrom_float24_cmp'
+  AS 'MODULE_PATHNAME','pgstrom_float24cmp'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 
-CREATE FUNCTION pgstrom.float28_eq(float2,float8)
+CREATE FUNCTION pgstrom.float28eq(float2,float8)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float28_eq'
+  AS 'MODULE_PATHNAME','pgstrom_float28eq'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_ne(float2,float8)
+CREATE FUNCTION pgstrom.float28ne(float2,float8)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float28_ne'
+  AS 'MODULE_PATHNAME','pgstrom_float28ne'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_lt(float2,float8)
+CREATE FUNCTION pgstrom.float28lt(float2,float8)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float28_lt'
+  AS 'MODULE_PATHNAME','pgstrom_float28lt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_le(float2,float8)
+CREATE FUNCTION pgstrom.float28le(float2,float8)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float28_le'
+  AS 'MODULE_PATHNAME','pgstrom_float28le'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_gt(float2,float8)
+CREATE FUNCTION pgstrom.float28gt(float2,float8)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float28_gt'
+  AS 'MODULE_PATHNAME','pgstrom_float28gt'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_ge(float2,float8)
+CREATE FUNCTION pgstrom.float28ge(float2,float8)
   RETURNS bool
-  AS 'MODULE_PATHNAME','pgstrom_float28_ge'
+  AS 'MODULE_PATHNAME','pgstrom_float28ge'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_cmp(float2,float8)
+CREATE FUNCTION pgstrom.float28cmp(float2,float8)
   RETURNS int
-  AS 'MODULE_PATHNAME','pgstrom_float28_cmp'
+  AS 'MODULE_PATHNAME','pgstrom_float28cmp'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 
 CREATE OPERATOR pg_catalog.= (
-  PROCEDURE = pgstrom.float2_eq,
+  PROCEDURE = pgstrom.float2eq,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = =, NEGATOR = <>
 );
 
 CREATE OPERATOR pg_catalog.<> (
-  PROCEDURE = pgstrom.float2_ne,
+  PROCEDURE = pgstrom.float2ne,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <>, NEGATOR = =
 );
 
 CREATE OPERATOR pg_catalog.< (
-  PROCEDURE = pgstrom.float2_lt,
+  PROCEDURE = pgstrom.float2lt,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = >, NEGATOR = >=
 );
 
 CREATE OPERATOR pg_catalog.<= (
-  PROCEDURE = pgstrom.float2_le,
+  PROCEDURE = pgstrom.float2le,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = >=, NEGATOR = >
 );
 
 CREATE OPERATOR pg_catalog.> (
-  PROCEDURE = pgstrom.float2_gt,
+  PROCEDURE = pgstrom.float2gt,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <, NEGATOR = <=
 );
 
 CREATE OPERATOR pg_catalog.>= (
-  PROCEDURE = pgstrom.float2_ge,
+  PROCEDURE = pgstrom.float2ge,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <=, NEGATOR = <
@@ -1009,42 +1009,42 @@ CREATE OPERATOR pg_catalog.>= (
 
 
 CREATE OPERATOR pg_catalog.= (
-  PROCEDURE = pgstrom.float42_eq,
+  PROCEDURE = pgstrom.float42eq,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = =, NEGATOR = <>
 );
 
 CREATE OPERATOR pg_catalog.<> (
-  PROCEDURE = pgstrom.float42_ne,
+  PROCEDURE = pgstrom.float42ne,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <>, NEGATOR = =
 );
 
 CREATE OPERATOR pg_catalog.< (
-  PROCEDURE = pgstrom.float42_lt,
+  PROCEDURE = pgstrom.float42lt,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = >, NEGATOR = >=
 );
 
 CREATE OPERATOR pg_catalog.<= (
-  PROCEDURE = pgstrom.float42_le,
+  PROCEDURE = pgstrom.float42le,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = >=, NEGATOR = >
 );
 
 CREATE OPERATOR pg_catalog.> (
-  PROCEDURE = pgstrom.float42_gt,
+  PROCEDURE = pgstrom.float42gt,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <, NEGATOR = <=
 );
 
 CREATE OPERATOR pg_catalog.>= (
-  PROCEDURE = pgstrom.float42_ge,
+  PROCEDURE = pgstrom.float42ge,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <=, NEGATOR = <
@@ -1052,84 +1052,84 @@ CREATE OPERATOR pg_catalog.>= (
 
 
 CREATE OPERATOR pg_catalog.= (
-  PROCEDURE = pgstrom.float82_eq,
+  PROCEDURE = pgstrom.float82eq,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = =, NEGATOR = <>
 );
 
 CREATE OPERATOR pg_catalog.<> (
-  PROCEDURE = pgstrom.float82_ne,
+  PROCEDURE = pgstrom.float82ne,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <>, NEGATOR = =
 );
 
 CREATE OPERATOR pg_catalog.< (
-  PROCEDURE = pgstrom.float82_lt,
+  PROCEDURE = pgstrom.float82lt,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = >, NEGATOR = >=
 );
 
 CREATE OPERATOR pg_catalog.<= (
-  PROCEDURE = pgstrom.float82_le,
+  PROCEDURE = pgstrom.float82le,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = >=, NEGATOR = >
 );
 
 CREATE OPERATOR pg_catalog.> (
-  PROCEDURE = pgstrom.float82_gt,
+  PROCEDURE = pgstrom.float82gt,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <, NEGATOR = <=
 );
 
 CREATE OPERATOR pg_catalog.>= (
-  PROCEDURE = pgstrom.float82_ge,
+  PROCEDURE = pgstrom.float82ge,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2,
   COMMUTATOR = <=, NEGATOR = <
 );
 
 CREATE OPERATOR pg_catalog.= (
-  PROCEDURE = pgstrom.float24_eq,
+  PROCEDURE = pgstrom.float24eq,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4,
   COMMUTATOR = =, NEGATOR = <>
 );
 
 CREATE OPERATOR pg_catalog.<> (
-  PROCEDURE = pgstrom.float24_ne,
+  PROCEDURE = pgstrom.float24ne,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4,
   COMMUTATOR = <>, NEGATOR = =
 );
 
 CREATE OPERATOR pg_catalog.< (
-  PROCEDURE = pgstrom.float24_lt,
+  PROCEDURE = pgstrom.float24lt,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4,
   COMMUTATOR = >, NEGATOR = >=
 );
 
 CREATE OPERATOR pg_catalog.<= (
-  PROCEDURE = pgstrom.float24_le,
+  PROCEDURE = pgstrom.float24le,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4,
   COMMUTATOR = >=, NEGATOR = >
 );
 
 CREATE OPERATOR pg_catalog.> (
-  PROCEDURE = pgstrom.float24_gt,
+  PROCEDURE = pgstrom.float24gt,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4,
   COMMUTATOR = <, NEGATOR = <=
 );
 
 CREATE OPERATOR pg_catalog.>= (
-  PROCEDURE = pgstrom.float24_ge,
+  PROCEDURE = pgstrom.float24ge,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4,
   COMMUTATOR = <=, NEGATOR = <
@@ -1137,42 +1137,42 @@ CREATE OPERATOR pg_catalog.>= (
 
 
 CREATE OPERATOR pg_catalog.= (
-  PROCEDURE = pgstrom.float28_eq,
+  PROCEDURE = pgstrom.float28eq,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8,
   COMMUTATOR = =, NEGATOR = <>
 );
 
 CREATE OPERATOR pg_catalog.<> (
-  PROCEDURE = pgstrom.float28_ne,
+  PROCEDURE = pgstrom.float28ne,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8,
   COMMUTATOR = <>, NEGATOR = =
 );
 
 CREATE OPERATOR pg_catalog.< (
-  PROCEDURE = pgstrom.float28_lt,
+  PROCEDURE = pgstrom.float28lt,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8,
   COMMUTATOR = >, NEGATOR = >=
 );
 
 CREATE OPERATOR pg_catalog.<= (
-  PROCEDURE = pgstrom.float28_le,
+  PROCEDURE = pgstrom.float28le,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8,
   COMMUTATOR = >=, NEGATOR = >
 );
 
 CREATE OPERATOR pg_catalog.> (
-  PROCEDURE = pgstrom.float28_gt,
+  PROCEDURE = pgstrom.float28gt,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8,
   COMMUTATOR = <, NEGATOR = <=
 );
 
 CREATE OPERATOR pg_catalog.>= (
-  PROCEDURE = pgstrom.float28_ge,
+  PROCEDURE = pgstrom.float28ge,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8,
   COMMUTATOR = <=, NEGATOR = <
@@ -1181,28 +1181,28 @@ CREATE OPERATOR pg_catalog.>= (
 --
 -- float2 unary operator
 --
-CREATE FUNCTION pgstrom.float2_up(float2)
+CREATE FUNCTION pgstrom.float2up(float2)
   RETURNS float2
-  AS 'MODULE_PATHNAME','pgstrom_float2_up'
+  AS 'MODULE_PATHNAME','pgstrom_float2up'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_um(float2)
+CREATE FUNCTION pgstrom.float2um(float2)
   RETURNS float2
-  AS 'MODULE_PATHNAME','pgstrom_float2_um'
+  AS 'MODULE_PATHNAME','pgstrom_float2um'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION pg_catalog.abs(float2)
   RETURNS float2
-  AS 'MODULE_PATHNAME','pgstrom_float2_abs'
+  AS 'MODULE_PATHNAME','pgstrom_float2abs'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE OPERATOR pg_catalog.+ (
-  PROCEDURE = pgstrom.float2_up,
+  PROCEDURE = pgstrom.float2up,
   RIGHTARG = pg_catalog.float2
 );
 
 CREATE OPERATOR pg_catalog.- (
-  PROCEDURE = pgstrom.float2_um,
+  PROCEDURE = pgstrom.float2um,
   RIGHTARG = pg_catalog.float2
 );
 
@@ -1214,207 +1214,207 @@ CREATE OPERATOR pg_catalog.@ (
 --
 -- float2 arithmetic operators
 --
-CREATE FUNCTION pgstrom.float2_pl(float2,float2)
+CREATE FUNCTION pgstrom.float2pl(float2,float2)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float2_pl'
+  AS 'MODULE_PATHNAME','pgstrom_float2pl'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_mi(float2,float2)
+CREATE FUNCTION pgstrom.float2mi(float2,float2)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float2_mi'
+  AS 'MODULE_PATHNAME','pgstrom_float2mi'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_mul(float2,float2)
+CREATE FUNCTION pgstrom.float2mul(float2,float2)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float2_mul'
+  AS 'MODULE_PATHNAME','pgstrom_float2mul'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float2_div(float2,float2)
+CREATE FUNCTION pgstrom.float2div(float2,float2)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float2_div'
+  AS 'MODULE_PATHNAME','pgstrom_float2div'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_pl(float2,float4)
+CREATE FUNCTION pgstrom.float24pl(float2,float4)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float24_pl'
+  AS 'MODULE_PATHNAME','pgstrom_float24pl'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_mi(float2,float4)
+CREATE FUNCTION pgstrom.float24mi(float2,float4)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float24_mi'
+  AS 'MODULE_PATHNAME','pgstrom_float24mi'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_mul(float2,float4)
+CREATE FUNCTION pgstrom.float24mul(float2,float4)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float24_mul'
+  AS 'MODULE_PATHNAME','pgstrom_float24mul'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float24_div(float2,float4)
+CREATE FUNCTION pgstrom.float24div(float2,float4)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float24_div'
+  AS 'MODULE_PATHNAME','pgstrom_float24div'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_pl(float2,float8)
+CREATE FUNCTION pgstrom.float28pl(float2,float8)
   RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_float28_pl'
+  AS 'MODULE_PATHNAME','pgstrom_float28pl'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_mi(float2,float8)
+CREATE FUNCTION pgstrom.float28mi(float2,float8)
   RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_float28_mi'
+  AS 'MODULE_PATHNAME','pgstrom_float28mi'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_mul(float2,float8)
+CREATE FUNCTION pgstrom.float28mul(float2,float8)
   RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_float28_mul'
+  AS 'MODULE_PATHNAME','pgstrom_float28mul'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float28_div(float2,float8)
+CREATE FUNCTION pgstrom.float28div(float2,float8)
   RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_float28_div'
+  AS 'MODULE_PATHNAME','pgstrom_float28div'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_pl(float4,float2)
+CREATE FUNCTION pgstrom.float42pl(float4,float2)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float42_pl'
+  AS 'MODULE_PATHNAME','pgstrom_float42pl'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_mi(float4,float2)
+CREATE FUNCTION pgstrom.float42mi(float4,float2)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float42_mi'
+  AS 'MODULE_PATHNAME','pgstrom_float42mi'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_mul(float4,float2)
+CREATE FUNCTION pgstrom.float42mul(float4,float2)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float42_mul'
+  AS 'MODULE_PATHNAME','pgstrom_float42mul'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float42_div(float4,float2)
+CREATE FUNCTION pgstrom.float42div(float4,float2)
   RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_float42_div'
+  AS 'MODULE_PATHNAME','pgstrom_float42div'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_pl(float8,float2)
+CREATE FUNCTION pgstrom.float82pl(float8,float2)
   RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_float82_pl'
+  AS 'MODULE_PATHNAME','pgstrom_float82pl'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_mi(float8,float2)
+CREATE FUNCTION pgstrom.float82mi(float8,float2)
   RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_float82_mi'
+  AS 'MODULE_PATHNAME','pgstrom_float82mi'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_mul(float8,float2)
+CREATE FUNCTION pgstrom.float82mul(float8,float2)
   RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_float82_mul'
+  AS 'MODULE_PATHNAME','pgstrom_float82mul'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE FUNCTION pgstrom.float82_div(float8,float2)
+CREATE FUNCTION pgstrom.float82div(float8,float2)
   RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_float82_div'
+  AS 'MODULE_PATHNAME','pgstrom_float82div'
   LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE OPERATOR pg_catalog.+ (
-  PROCEDURE = pgstrom.float2_pl,
+  PROCEDURE = pgstrom.float2pl,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog.- (
-  PROCEDURE = pgstrom.float2_mi,
+  PROCEDURE = pgstrom.float2mi,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog.* (
-  PROCEDURE = pgstrom.float2_mul,
+  PROCEDURE = pgstrom.float2mul,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog./ (
-  PROCEDURE = pgstrom.float2_div,
+  PROCEDURE = pgstrom.float2div,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float2
 );
 
 CREATE OPERATOR pg_catalog.+ (
-  PROCEDURE = pgstrom.float24_pl,
+  PROCEDURE = pgstrom.float24pl,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4
 );
 CREATE OPERATOR pg_catalog.- (
-  PROCEDURE = pgstrom.float24_mi,
+  PROCEDURE = pgstrom.float24mi,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4
 );
 CREATE OPERATOR pg_catalog.* (
-  PROCEDURE = pgstrom.float24_mul,
+  PROCEDURE = pgstrom.float24mul,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4
 );
 CREATE OPERATOR pg_catalog./ (
-  PROCEDURE = pgstrom.float24_div,
+  PROCEDURE = pgstrom.float24div,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float4
 );
 
 CREATE OPERATOR pg_catalog.+ (
-  PROCEDURE = pgstrom.float28_pl,
+  PROCEDURE = pgstrom.float28pl,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8
 );
 CREATE OPERATOR pg_catalog.- (
-  PROCEDURE = pgstrom.float28_mi,
+  PROCEDURE = pgstrom.float28mi,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8
 );
 CREATE OPERATOR pg_catalog.* (
-  PROCEDURE = pgstrom.float28_mul,
+  PROCEDURE = pgstrom.float28mul,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8
 );
 CREATE OPERATOR pg_catalog./ (
-  PROCEDURE = pgstrom.float28_div,
+  PROCEDURE = pgstrom.float28div,
   LEFTARG = pg_catalog.float2,
   RIGHTARG = pg_catalog.float8
 );
 
 CREATE OPERATOR pg_catalog.+ (
-  PROCEDURE = pgstrom.float42_pl,
+  PROCEDURE = pgstrom.float42pl,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog.- (
-  PROCEDURE = pgstrom.float42_mi,
+  PROCEDURE = pgstrom.float42mi,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog.* (
-  PROCEDURE = pgstrom.float42_mul,
+  PROCEDURE = pgstrom.float42mul,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog./ (
-  PROCEDURE = pgstrom.float42_div,
+  PROCEDURE = pgstrom.float42div,
   LEFTARG = pg_catalog.float4,
   RIGHTARG = pg_catalog.float2
 );
 
 CREATE OPERATOR pg_catalog.+ (
-  PROCEDURE = pgstrom.float82_pl,
+  PROCEDURE = pgstrom.float82pl,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog.- (
-  PROCEDURE = pgstrom.float82_mi,
+  PROCEDURE = pgstrom.float82mi,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog.* (
-  PROCEDURE = pgstrom.float82_mul,
+  PROCEDURE = pgstrom.float82mul,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2
 );
 CREATE OPERATOR pg_catalog./ (
-  PROCEDURE = pgstrom.float82_div,
+  PROCEDURE = pgstrom.float82div,
   LEFTARG = pg_catalog.float8,
   RIGHTARG = pg_catalog.float2
 );
@@ -1455,36 +1455,6 @@ CREATE OPERATOR pg_catalog./ (
   RIGHTARG = pg_catalog.float2
 );
 
-CREATE FUNCTION pg_catalog.as_int8(float8)
-  RETURNS int8
-  AS 'MODULE_PATHNAME','pgstrom_float8_as_int8'
-  LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-
-CREATE FUNCTION pg_catalog.as_int4(float4)
-  RETURNS int4
-  AS 'MODULE_PATHNAME','pgstrom_float4_as_int4'
-  LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-
-CREATE FUNCTION pg_catalog.as_int2(float2)
-  RETURNS int2
-  AS 'MODULE_PATHNAME','pgstrom_float2_as_int2'
-  LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-
-CREATE FUNCTION pg_catalog.as_float8(int8)
-  RETURNS float8
-  AS 'MODULE_PATHNAME','pgstrom_int8_as_float8'
-  LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-
-CREATE FUNCTION pg_catalog.as_float4(int4)
-  RETURNS float4
-  AS 'MODULE_PATHNAME','pgstrom_int4_as_float4'
-  LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-
-CREATE FUNCTION pg_catalog.as_float2(int2)
-  RETURNS float2
-  AS 'MODULE_PATHNAME','pgstrom_int2_as_float2'
-  LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
-
 --
 -- float2 aggregate functions
 --
@@ -1512,12 +1482,12 @@ CREATE AGGREGATE pg_catalog.sum(float2) (
 );
 
 CREATE AGGREGATE pg_catalog.max(float2) (
-  sfunc = pgstrom.float2_larger,
+  sfunc = pgstrom.float2larger,
   stype = float2
 );
 
 CREATE AGGREGATE pg_catalog.min(float2) (
-  sfunc = pgstrom.float2_smaller,
+  sfunc = pgstrom.float2smaller,
   stype = float2
 );
 
@@ -1580,12 +1550,12 @@ CREATE OPERATOR CLASS pg_catalog.float2_ops
   operator 3 =  (float2, float2) for search,
   operator 4 >= (float2, float2) for search,
   operator 5 >  (float2, float2) for search,
-  function 1 (float2, float2) pgstrom.float2_cmp(float2, float2);
+  function 1 (float2, float2) pgstrom.float2cmp(float2, float2);
 
 CREATE OPERATOR CLASS pg_catalog.float2_ops
   default for type pg_catalog.float2
   using hash family pg_catalog.float_ops as
-  function 1 (float2) pgstrom.float2_hash(float2);
+  function 1 (float2) pgstrom.float2hash(float2);
 
 -- ==================================================================
 --

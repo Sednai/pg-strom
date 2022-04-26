@@ -129,7 +129,7 @@ build_composite_devtype_info(TypeCacheEntry *tcache, const char *ext_name)
 	dtype->type_align = typealign_get_width(tcache->typalign);
 	dtype->type_byval = tcache->typbyval;
     dtype->type_name = get_type_name(tcache->type_id, false);
-	dtype->type_hashfunc = devtype_composite_hash;
+	dtype->type_hashfunc = NULL; //devtype_composite_hash;
 	dtype->comp_nfields = tupdesc->natts;
 	memcpy(dtype->comp_subtypes, subtypes,
 		   sizeof(devtype_info *) * tupdesc->natts);
@@ -159,7 +159,7 @@ build_array_devtype_info(TypeCacheEntry *tcache, const char *ext_name)
 	dtype->type_align = typealign_get_width(tcache->typalign);
 	dtype->type_byval = tcache->typbyval;
 	dtype->type_name = psprintf("%s[]", elem->type_name);
-	dtype->type_hashfunc = devtype_array_hash;
+	dtype->type_hashfunc = NULL; //devtype_array_hash;
 	/* type equality functions */
 	dtype->type_eqfunc = get_opcode(tcache->eq_opr);
 	dtype->type_cmpfunc = tcache->cmp_proc;

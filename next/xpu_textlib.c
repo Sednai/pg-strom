@@ -156,6 +156,20 @@ sql_bpchar_hash(kern_context*kcxt,
 	return true;
 }
 
+PUBLIC_FUNCTION(uint32_t)
+devtype_bpchar_hash(bool isnull, Datum value)
+{
+	sql_bpchar_t	temp;
+	uint32_t		hash;
+	void		   *addr;
+	DECL_KERNEL_CONTEXT(u,NULL,0);
+	addr = (isnull ? NULL : DatumGetPointer(value));
+	if (!sql_bpchar_datum_ref(&u.kcxt, &temp, addr) ||
+		!sql_bpchar_hash(&u.kcxt, &hash, &temp))
+		pg_kern_ereport(&u.kcxt);
+	return hash;
+}
+
 /* ----------------------------------------------------------------
  *
  * text functions and operators

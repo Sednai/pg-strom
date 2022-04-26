@@ -18,10 +18,10 @@
 #define Float2GetDatum(x)	Int16GetDatum(x)
 
 /* type i/o handler */
-PG_FUNCTION_INFO_V1(pgstrom_float2_in);
-PG_FUNCTION_INFO_V1(pgstrom_float2_out);
-PG_FUNCTION_INFO_V1(pgstrom_float2_recv);
-PG_FUNCTION_INFO_V1(pgstrom_float2_send);
+PG_FUNCTION_INFO_V1(pgstrom_float2in);
+PG_FUNCTION_INFO_V1(pgstrom_float2out);
+PG_FUNCTION_INFO_V1(pgstrom_float2recv);
+PG_FUNCTION_INFO_V1(pgstrom_float2send);
 /* type cast */
 PG_FUNCTION_INFO_V1(pgstrom_float2_to_float4);
 PG_FUNCTION_INFO_V1(pgstrom_float2_to_float8);
@@ -38,89 +38,83 @@ PG_FUNCTION_INFO_V1(pgstrom_int4_to_float2);
 PG_FUNCTION_INFO_V1(pgstrom_int8_to_float2);
 PG_FUNCTION_INFO_V1(pgstrom_numeric_to_float2);
 /* type comparison */
-PG_FUNCTION_INFO_V1(pgstrom_float2_eq);
-PG_FUNCTION_INFO_V1(pgstrom_float2_ne);
-PG_FUNCTION_INFO_V1(pgstrom_float2_lt);
-PG_FUNCTION_INFO_V1(pgstrom_float2_le);
-PG_FUNCTION_INFO_V1(pgstrom_float2_gt);
-PG_FUNCTION_INFO_V1(pgstrom_float2_ge);
-PG_FUNCTION_INFO_V1(pgstrom_float2_cmp);
-PG_FUNCTION_INFO_V1(pgstrom_float2_larger);
-PG_FUNCTION_INFO_V1(pgstrom_float2_smaller);
-PG_FUNCTION_INFO_V1(pgstrom_float2_hash);
+PG_FUNCTION_INFO_V1(pgstrom_float2eq);
+PG_FUNCTION_INFO_V1(pgstrom_float2ne);
+PG_FUNCTION_INFO_V1(pgstrom_float2lt);
+PG_FUNCTION_INFO_V1(pgstrom_float2le);
+PG_FUNCTION_INFO_V1(pgstrom_float2gt);
+PG_FUNCTION_INFO_V1(pgstrom_float2ge);
+PG_FUNCTION_INFO_V1(pgstrom_float2cmp);
+PG_FUNCTION_INFO_V1(pgstrom_float2larger);
+PG_FUNCTION_INFO_V1(pgstrom_float2smaller);
+PG_FUNCTION_INFO_V1(pgstrom_float2hash);
 
-PG_FUNCTION_INFO_V1(pgstrom_float42_eq);
-PG_FUNCTION_INFO_V1(pgstrom_float42_ne);
-PG_FUNCTION_INFO_V1(pgstrom_float42_lt);
-PG_FUNCTION_INFO_V1(pgstrom_float42_le);
-PG_FUNCTION_INFO_V1(pgstrom_float42_gt);
-PG_FUNCTION_INFO_V1(pgstrom_float42_ge);
-PG_FUNCTION_INFO_V1(pgstrom_float42_cmp);
+PG_FUNCTION_INFO_V1(pgstrom_float42eq);
+PG_FUNCTION_INFO_V1(pgstrom_float42ne);
+PG_FUNCTION_INFO_V1(pgstrom_float42lt);
+PG_FUNCTION_INFO_V1(pgstrom_float42le);
+PG_FUNCTION_INFO_V1(pgstrom_float42gt);
+PG_FUNCTION_INFO_V1(pgstrom_float42ge);
+PG_FUNCTION_INFO_V1(pgstrom_float42cmp);
 
-PG_FUNCTION_INFO_V1(pgstrom_float82_eq);
-PG_FUNCTION_INFO_V1(pgstrom_float82_ne);
-PG_FUNCTION_INFO_V1(pgstrom_float82_lt);
-PG_FUNCTION_INFO_V1(pgstrom_float82_le);
-PG_FUNCTION_INFO_V1(pgstrom_float82_gt);
-PG_FUNCTION_INFO_V1(pgstrom_float82_ge);
-PG_FUNCTION_INFO_V1(pgstrom_float82_cmp);
+PG_FUNCTION_INFO_V1(pgstrom_float82eq);
+PG_FUNCTION_INFO_V1(pgstrom_float82ne);
+PG_FUNCTION_INFO_V1(pgstrom_float82lt);
+PG_FUNCTION_INFO_V1(pgstrom_float82le);
+PG_FUNCTION_INFO_V1(pgstrom_float82gt);
+PG_FUNCTION_INFO_V1(pgstrom_float82ge);
+PG_FUNCTION_INFO_V1(pgstrom_float82cmp);
 
-PG_FUNCTION_INFO_V1(pgstrom_float24_eq);
-PG_FUNCTION_INFO_V1(pgstrom_float24_ne);
-PG_FUNCTION_INFO_V1(pgstrom_float24_lt);
-PG_FUNCTION_INFO_V1(pgstrom_float24_le);
-PG_FUNCTION_INFO_V1(pgstrom_float24_gt);
-PG_FUNCTION_INFO_V1(pgstrom_float24_ge);
-PG_FUNCTION_INFO_V1(pgstrom_float24_cmp);
+PG_FUNCTION_INFO_V1(pgstrom_float24eq);
+PG_FUNCTION_INFO_V1(pgstrom_float24ne);
+PG_FUNCTION_INFO_V1(pgstrom_float24lt);
+PG_FUNCTION_INFO_V1(pgstrom_float24le);
+PG_FUNCTION_INFO_V1(pgstrom_float24gt);
+PG_FUNCTION_INFO_V1(pgstrom_float24ge);
+PG_FUNCTION_INFO_V1(pgstrom_float24cmp);
 
-PG_FUNCTION_INFO_V1(pgstrom_float28_eq);
-PG_FUNCTION_INFO_V1(pgstrom_float28_ne);
-PG_FUNCTION_INFO_V1(pgstrom_float28_lt);
-PG_FUNCTION_INFO_V1(pgstrom_float28_le);
-PG_FUNCTION_INFO_V1(pgstrom_float28_gt);
-PG_FUNCTION_INFO_V1(pgstrom_float28_ge);
-PG_FUNCTION_INFO_V1(pgstrom_float28_cmp);
+PG_FUNCTION_INFO_V1(pgstrom_float28eq);
+PG_FUNCTION_INFO_V1(pgstrom_float28ne);
+PG_FUNCTION_INFO_V1(pgstrom_float28lt);
+PG_FUNCTION_INFO_V1(pgstrom_float28le);
+PG_FUNCTION_INFO_V1(pgstrom_float28gt);
+PG_FUNCTION_INFO_V1(pgstrom_float28ge);
+PG_FUNCTION_INFO_V1(pgstrom_float28cmp);
 
 /* unary operators */
-PG_FUNCTION_INFO_V1(pgstrom_float2_up);
-PG_FUNCTION_INFO_V1(pgstrom_float2_um);
-PG_FUNCTION_INFO_V1(pgstrom_float2_abs);
+PG_FUNCTION_INFO_V1(pgstrom_float2up);
+PG_FUNCTION_INFO_V1(pgstrom_float2um);
+PG_FUNCTION_INFO_V1(pgstrom_float2abs);
 /* arithmetric operators */
-PG_FUNCTION_INFO_V1(pgstrom_float2_pl);
-PG_FUNCTION_INFO_V1(pgstrom_float2_mi);
-PG_FUNCTION_INFO_V1(pgstrom_float2_mul);
-PG_FUNCTION_INFO_V1(pgstrom_float2_div);
+PG_FUNCTION_INFO_V1(pgstrom_float2pl);
+PG_FUNCTION_INFO_V1(pgstrom_float2mi);
+PG_FUNCTION_INFO_V1(pgstrom_float2mul);
+PG_FUNCTION_INFO_V1(pgstrom_float2div);
 
-PG_FUNCTION_INFO_V1(pgstrom_float24_pl);
-PG_FUNCTION_INFO_V1(pgstrom_float24_mi);
-PG_FUNCTION_INFO_V1(pgstrom_float24_mul);
-PG_FUNCTION_INFO_V1(pgstrom_float24_div);
+PG_FUNCTION_INFO_V1(pgstrom_float24pl);
+PG_FUNCTION_INFO_V1(pgstrom_float24mi);
+PG_FUNCTION_INFO_V1(pgstrom_float24mul);
+PG_FUNCTION_INFO_V1(pgstrom_float24div);
 
-PG_FUNCTION_INFO_V1(pgstrom_float28_pl);
-PG_FUNCTION_INFO_V1(pgstrom_float28_mi);
-PG_FUNCTION_INFO_V1(pgstrom_float28_mul);
-PG_FUNCTION_INFO_V1(pgstrom_float28_div);
+PG_FUNCTION_INFO_V1(pgstrom_float28pl);
+PG_FUNCTION_INFO_V1(pgstrom_float28mi);
+PG_FUNCTION_INFO_V1(pgstrom_float28mul);
+PG_FUNCTION_INFO_V1(pgstrom_float28div);
 
-PG_FUNCTION_INFO_V1(pgstrom_float42_pl);
-PG_FUNCTION_INFO_V1(pgstrom_float42_mi);
-PG_FUNCTION_INFO_V1(pgstrom_float42_mul);
-PG_FUNCTION_INFO_V1(pgstrom_float42_div);
+PG_FUNCTION_INFO_V1(pgstrom_float42pl);
+PG_FUNCTION_INFO_V1(pgstrom_float42mi);
+PG_FUNCTION_INFO_V1(pgstrom_float42mul);
+PG_FUNCTION_INFO_V1(pgstrom_float42div);
 
-PG_FUNCTION_INFO_V1(pgstrom_float82_pl);
-PG_FUNCTION_INFO_V1(pgstrom_float82_mi);
-PG_FUNCTION_INFO_V1(pgstrom_float82_mul);
-PG_FUNCTION_INFO_V1(pgstrom_float82_div);
+PG_FUNCTION_INFO_V1(pgstrom_float82pl);
+PG_FUNCTION_INFO_V1(pgstrom_float82mi);
+PG_FUNCTION_INFO_V1(pgstrom_float82mul);
+PG_FUNCTION_INFO_V1(pgstrom_float82div);
 
 /* misc functions */
 PG_FUNCTION_INFO_V1(pgstrom_cash_mul_flt2);
 PG_FUNCTION_INFO_V1(pgstrom_flt2_mul_cash);
 PG_FUNCTION_INFO_V1(pgstrom_cash_div_flt2);
-PG_FUNCTION_INFO_V1(pgstrom_float8_as_int8);
-PG_FUNCTION_INFO_V1(pgstrom_float4_as_int4);
-PG_FUNCTION_INFO_V1(pgstrom_float2_as_int2);
-PG_FUNCTION_INFO_V1(pgstrom_int8_as_float8);
-PG_FUNCTION_INFO_V1(pgstrom_int4_as_float4);
-PG_FUNCTION_INFO_V1(pgstrom_int2_as_float2);
 PG_FUNCTION_INFO_V1(pgstrom_float2_accum);
 PG_FUNCTION_INFO_V1(pgstrom_float2_sum);
 
@@ -174,10 +168,10 @@ print_fp64(const char *prefix, uint64 value)
 	} while(0)
 
 /*
- * pgstrom_float2_in
+ * pgstrom_float2in
  */
 Datum
-pgstrom_float2_in(PG_FUNCTION_ARGS)
+pgstrom_float2in(PG_FUNCTION_ARGS)
 {
 	Datum	datum = float4in(fcinfo);
 	float	fval;
@@ -190,10 +184,10 @@ pgstrom_float2_in(PG_FUNCTION_ARGS)
 }
 
 /*
- * pgstrom_float2_out
+ * pgstrom_float2out
  */
 Datum
-pgstrom_float2_out(PG_FUNCTION_ARGS)
+pgstrom_float2out(PG_FUNCTION_ARGS)
 {
 	float	fval = fp16_to_fp32((half_t)PG_GETARG_FLOAT2(0));
 
@@ -201,19 +195,19 @@ pgstrom_float2_out(PG_FUNCTION_ARGS)
 }
 
 /*
- * pgstrom_float2_recv
+ * pgstrom_float2recv
  */
 Datum
-pgstrom_float2_recv(PG_FUNCTION_ARGS)
+pgstrom_float2recv(PG_FUNCTION_ARGS)
 {
 	return int2recv(fcinfo);
 }
 
 /*
- * pgstrom_float2_send
+ * pgstrom_float2send
  */
 Datum
-pgstrom_float2_send(PG_FUNCTION_ARGS)
+pgstrom_float2send(PG_FUNCTION_ARGS)
 {
 	return int2send(fcinfo);
 }
@@ -382,7 +376,7 @@ pgstrom_numeric_to_float2(PG_FUNCTION_ARGS)
  * Comparison operators
  */
 Datum
-pgstrom_float2_eq(PG_FUNCTION_ARGS)
+pgstrom_float2eq(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -391,7 +385,7 @@ pgstrom_float2_eq(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_ne(PG_FUNCTION_ARGS)
+pgstrom_float2ne(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -400,7 +394,7 @@ pgstrom_float2_ne(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_lt(PG_FUNCTION_ARGS)
+pgstrom_float2lt(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -409,7 +403,7 @@ pgstrom_float2_lt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_le(PG_FUNCTION_ARGS)
+pgstrom_float2le(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -418,7 +412,7 @@ pgstrom_float2_le(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_gt(PG_FUNCTION_ARGS)
+pgstrom_float2gt(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -427,7 +421,7 @@ pgstrom_float2_gt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_ge(PG_FUNCTION_ARGS)
+pgstrom_float2ge(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -436,7 +430,7 @@ pgstrom_float2_ge(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_cmp(PG_FUNCTION_ARGS)
+pgstrom_float2cmp(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -446,7 +440,7 @@ pgstrom_float2_cmp(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_larger(PG_FUNCTION_ARGS)
+pgstrom_float2larger(PG_FUNCTION_ARGS)
 {
 	half_t	arg1 = PG_GETARG_FLOAT2(0);
 	half_t	arg2 = PG_GETARG_FLOAT2(1);
@@ -455,7 +449,7 @@ pgstrom_float2_larger(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_smaller(PG_FUNCTION_ARGS)
+pgstrom_float2smaller(PG_FUNCTION_ARGS)
 {
 	half_t	arg1 = PG_GETARG_FLOAT2(0);
 	half_t	arg2 = PG_GETARG_FLOAT2(1);
@@ -464,7 +458,7 @@ pgstrom_float2_smaller(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_hash(PG_FUNCTION_ARGS)
+pgstrom_float2hash(PG_FUNCTION_ARGS)
 {
 	half_t	fval = PG_GETARG_FLOAT2(0);
 	int32	sign = (fval & 0x8000);
@@ -486,7 +480,7 @@ pgstrom_float2_hash(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_eq(PG_FUNCTION_ARGS)
+pgstrom_float42eq(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -495,7 +489,7 @@ pgstrom_float42_eq(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_ne(PG_FUNCTION_ARGS)
+pgstrom_float42ne(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -504,7 +498,7 @@ pgstrom_float42_ne(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_lt(PG_FUNCTION_ARGS)
+pgstrom_float42lt(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -513,7 +507,7 @@ pgstrom_float42_lt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_le(PG_FUNCTION_ARGS)
+pgstrom_float42le(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -522,7 +516,7 @@ pgstrom_float42_le(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_gt(PG_FUNCTION_ARGS)
+pgstrom_float42gt(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -531,7 +525,7 @@ pgstrom_float42_gt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_ge(PG_FUNCTION_ARGS)
+pgstrom_float42ge(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -540,7 +534,7 @@ pgstrom_float42_ge(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_cmp(PG_FUNCTION_ARGS)
+pgstrom_float42cmp(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -550,7 +544,7 @@ pgstrom_float42_cmp(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_eq(PG_FUNCTION_ARGS)
+pgstrom_float82eq(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -559,7 +553,7 @@ pgstrom_float82_eq(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_ne(PG_FUNCTION_ARGS)
+pgstrom_float82ne(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -568,7 +562,7 @@ pgstrom_float82_ne(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_lt(PG_FUNCTION_ARGS)
+pgstrom_float82lt(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -577,7 +571,7 @@ pgstrom_float82_lt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_le(PG_FUNCTION_ARGS)
+pgstrom_float82le(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -586,7 +580,7 @@ pgstrom_float82_le(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_gt(PG_FUNCTION_ARGS)
+pgstrom_float82gt(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -595,7 +589,7 @@ pgstrom_float82_gt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_ge(PG_FUNCTION_ARGS)
+pgstrom_float82ge(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -604,7 +598,7 @@ pgstrom_float82_ge(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_cmp(PG_FUNCTION_ARGS)
+pgstrom_float82cmp(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -614,7 +608,7 @@ pgstrom_float82_cmp(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_eq(PG_FUNCTION_ARGS)
+pgstrom_float24eq(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
   	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -623,7 +617,7 @@ pgstrom_float24_eq(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_ne(PG_FUNCTION_ARGS)
+pgstrom_float24ne(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
   	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -632,7 +626,7 @@ pgstrom_float24_ne(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_lt(PG_FUNCTION_ARGS)
+pgstrom_float24lt(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
   	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -641,7 +635,7 @@ pgstrom_float24_lt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_le(PG_FUNCTION_ARGS)
+pgstrom_float24le(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
   	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -650,7 +644,7 @@ pgstrom_float24_le(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_gt(PG_FUNCTION_ARGS)
+pgstrom_float24gt(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
   	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -659,7 +653,7 @@ pgstrom_float24_gt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_ge(PG_FUNCTION_ARGS)
+pgstrom_float24ge(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
   	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -668,7 +662,7 @@ pgstrom_float24_ge(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_cmp(PG_FUNCTION_ARGS)
+pgstrom_float24cmp(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
   	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -678,7 +672,7 @@ pgstrom_float24_cmp(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_eq(PG_FUNCTION_ARGS)
+pgstrom_float28eq(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
   	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -687,7 +681,7 @@ pgstrom_float28_eq(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_ne(PG_FUNCTION_ARGS)
+pgstrom_float28ne(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
   	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -696,7 +690,7 @@ pgstrom_float28_ne(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_lt(PG_FUNCTION_ARGS)
+pgstrom_float28lt(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
   	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -705,7 +699,7 @@ pgstrom_float28_lt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_le(PG_FUNCTION_ARGS)
+pgstrom_float28le(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
   	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -714,7 +708,7 @@ pgstrom_float28_le(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_gt(PG_FUNCTION_ARGS)
+pgstrom_float28gt(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
   	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -723,7 +717,7 @@ pgstrom_float28_gt(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_ge(PG_FUNCTION_ARGS)
+pgstrom_float28ge(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
   	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -732,7 +726,7 @@ pgstrom_float28_ge(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_cmp(PG_FUNCTION_ARGS)
+pgstrom_float28cmp(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
   	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -745,7 +739,7 @@ pgstrom_float28_cmp(PG_FUNCTION_ARGS)
  * unary operators
  */
 Datum
-pgstrom_float2_up(PG_FUNCTION_ARGS)
+pgstrom_float2up(PG_FUNCTION_ARGS)
 {
 	half_t	fval = PG_GETARG_FLOAT2(0);
 
@@ -753,7 +747,7 @@ pgstrom_float2_up(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_um(PG_FUNCTION_ARGS)
+pgstrom_float2um(PG_FUNCTION_ARGS)
 {
 	half_t	fval = PG_GETARG_FLOAT2(0);
 
@@ -763,7 +757,7 @@ pgstrom_float2_um(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_abs(PG_FUNCTION_ARGS)
+pgstrom_float2abs(PG_FUNCTION_ARGS)
 {
 	half_t	fval = PG_GETARG_FLOAT2(0);
 
@@ -776,7 +770,7 @@ pgstrom_float2_abs(PG_FUNCTION_ARGS)
  * arithmetic operations
  */
 Datum
-pgstrom_float2_pl(PG_FUNCTION_ARGS)
+pgstrom_float2pl(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -789,7 +783,7 @@ pgstrom_float2_pl(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_mi(PG_FUNCTION_ARGS)
+pgstrom_float2mi(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -801,7 +795,7 @@ pgstrom_float2_mi(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_mul(PG_FUNCTION_ARGS)
+pgstrom_float2mul(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -816,7 +810,7 @@ pgstrom_float2_mul(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float2_div(PG_FUNCTION_ARGS)
+pgstrom_float2div(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -833,7 +827,7 @@ pgstrom_float2_div(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_pl(PG_FUNCTION_ARGS)
+pgstrom_float24pl(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -846,7 +840,7 @@ pgstrom_float24_pl(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_mi(PG_FUNCTION_ARGS)
+pgstrom_float24mi(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -859,7 +853,7 @@ pgstrom_float24_mi(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_mul(PG_FUNCTION_ARGS)
+pgstrom_float24mul(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -873,7 +867,7 @@ pgstrom_float24_mul(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float24_div(PG_FUNCTION_ARGS)
+pgstrom_float24div(PG_FUNCTION_ARGS)
 {
 	float	arg1 = fp16_to_fp32(PG_GETARG_FLOAT2(0));
 	float	arg2 = PG_GETARG_FLOAT4(1);
@@ -891,7 +885,7 @@ pgstrom_float24_div(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_pl(PG_FUNCTION_ARGS)
+pgstrom_float28pl(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
 	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -904,7 +898,7 @@ pgstrom_float28_pl(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_mi(PG_FUNCTION_ARGS)
+pgstrom_float28mi(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
 	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -917,7 +911,7 @@ pgstrom_float28_mi(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_mul(PG_FUNCTION_ARGS)
+pgstrom_float28mul(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
 	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -931,7 +925,7 @@ pgstrom_float28_mul(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float28_div(PG_FUNCTION_ARGS)
+pgstrom_float28div(PG_FUNCTION_ARGS)
 {
 	double	arg1 = fp16_to_fp64(PG_GETARG_FLOAT2(0));
 	double	arg2 = PG_GETARG_FLOAT8(1);
@@ -949,7 +943,7 @@ pgstrom_float28_div(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_pl(PG_FUNCTION_ARGS)
+pgstrom_float42pl(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -961,7 +955,7 @@ pgstrom_float42_pl(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_mi(PG_FUNCTION_ARGS)
+pgstrom_float42mi(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -973,7 +967,7 @@ pgstrom_float42_mi(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_mul(PG_FUNCTION_ARGS)
+pgstrom_float42mul(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -987,7 +981,7 @@ pgstrom_float42_mul(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float42_div(PG_FUNCTION_ARGS)
+pgstrom_float42div(PG_FUNCTION_ARGS)
 {
 	float	arg1 = PG_GETARG_FLOAT4(0);
 	float	arg2 = fp16_to_fp32(PG_GETARG_FLOAT2(1));
@@ -1004,7 +998,7 @@ pgstrom_float42_div(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_pl(PG_FUNCTION_ARGS)
+pgstrom_float82pl(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -1016,7 +1010,7 @@ pgstrom_float82_pl(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_mi(PG_FUNCTION_ARGS)
+pgstrom_float82mi(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -1028,7 +1022,7 @@ pgstrom_float82_mi(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_mul(PG_FUNCTION_ARGS)
+pgstrom_float82mul(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -1043,7 +1037,7 @@ pgstrom_float82_mul(PG_FUNCTION_ARGS)
 }
 
 Datum
-pgstrom_float82_div(PG_FUNCTION_ARGS)
+pgstrom_float82div(PG_FUNCTION_ARGS)
 {
 	double	arg1 = PG_GETARG_FLOAT8(0);
 	double	arg2 = fp16_to_fp64(PG_GETARG_FLOAT2(1));
@@ -1099,54 +1093,6 @@ pgstrom_cash_div_flt2(PG_FUNCTION_ARGS)
 
 	result = rint(c / f);
 	PG_RETURN_CASH(result);
-}
-
-Datum
-pgstrom_float8_as_int8(PG_FUNCTION_ARGS)
-{
-	float8	fval = PG_GETARG_FLOAT8(0);
-
-	PG_RETURN_INT64(double_as_long(fval));
-}
-
-Datum
-pgstrom_float4_as_int4(PG_FUNCTION_ARGS)
-{
-	float4	fval = PG_GETARG_FLOAT4(0);
-
-	PG_RETURN_INT32(float_as_int(fval));
-}
-
-Datum
-pgstrom_float2_as_int2(PG_FUNCTION_ARGS)
-{
-	half_t	fval = PG_GETARG_FLOAT2(0);
-
-	PG_RETURN_INT16(fval);	/* actually, half_t is unsigned short */
-}
-
-Datum
-pgstrom_int8_as_float8(PG_FUNCTION_ARGS)
-{
-	int64	ival = PG_GETARG_INT64(0);
-
-	PG_RETURN_FLOAT8(long_as_double(ival));
-}
-
-Datum
-pgstrom_int4_as_float4(PG_FUNCTION_ARGS)
-{
-	int32	ival = PG_GETARG_INT32(0);
-
-	PG_RETURN_FLOAT4(int_as_float(ival));
-}
-
-Datum
-pgstrom_int2_as_float2(PG_FUNCTION_ARGS)
-{
-	int16	ival = PG_GETARG_INT16(0);
-
-	PG_RETURN_FLOAT2(ival);	/* actually, half_t is unsigned short */
 }
 
 Datum

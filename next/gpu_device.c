@@ -533,7 +533,7 @@ gpuOptimalBlockSize(int *p_grid_sz,
 }
 
 /*
- * pgstrom_device_info - SQL function to dump device info
+ * pgstrom_gpu_device_info - SQL function to dump device info
  */
 PG_FUNCTION_INFO_V1(pgstrom_gpu_device_info);
 Datum

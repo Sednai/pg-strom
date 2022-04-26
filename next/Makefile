@@ -87,6 +87,7 @@ SHLIB_LINK := -L $(CUDA_LIB_PATH) -lcuda
 #
 MODULE_big = pg_strom
 MODULEDIR  = pg_strom
+DATA = $(STROM_SQL)
 OBJS = $(STROM_OBJS)
 EXTENSION = pg_strom
 

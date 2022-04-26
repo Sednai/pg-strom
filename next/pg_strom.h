@@ -21,6 +21,7 @@
 
 #include "access/genam.h"
 #include "access/table.h"
+#include "catalog/binary_upgrade.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaccess.h"
@@ -98,7 +99,7 @@ extern int		numGpuDevAttrs;
 
 #define EXPR_OPCODE(NAME)			ExprOpCode__##NAME,
 #define TYPE_OPCODE(NAME,a,b)		TypeOpCode__##NAME,
-#define FUNC_OPCODE(NAME)			FuncOpCode__##NAME,
+#define FUNC_OPCODE(a,b,c,NAME,d)	FuncOpCode__##NAME,
 typedef enum {
 	XpuOpCode__MinValue = 1000,
 #include "xpu_opcodes.h"

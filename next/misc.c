@@ -718,6 +718,43 @@ errorText(int errcode)
 #endif
 
 /*
+ * pgstrom_define_shell_type - A wrapper for TypeShellMake with a particular OID
+ */
+PG_FUNCTION_INFO_V1(pgstrom_define_shell_type);
+Datum
+pgstrom_define_shell_type(PG_FUNCTION_ARGS)
+{
+	char   *type_name = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	Oid		type_oid = PG_GETARG_OID(1);
+	Oid		type_namespace = PG_GETARG_OID(2);
+	bool	__IsBinaryUpgrade = IsBinaryUpgrade;
+	Oid		__binary_upgrade_next_pg_type_oid = binary_upgrade_next_pg_type_oid;
+
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be superuser to create a shell type")));
+	PG_TRY();
+	{
+		IsBinaryUpgrade = true;
+		binary_upgrade_next_pg_type_oid = type_oid;
+
+		TypeShellMake(type_name, type_namespace, GetUserId());
+	}
+	PG_CATCH();
+	{
+		IsBinaryUpgrade = __IsBinaryUpgrade;
+		binary_upgrade_next_pg_type_oid = __binary_upgrade_next_pg_type_oid;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+	IsBinaryUpgrade = __IsBinaryUpgrade;
+	binary_upgrade_next_pg_type_oid = __binary_upgrade_next_pg_type_oid;
+
+	PG_RETURN_OID(type_oid);
+}
+
+/*
  * ----------------------------------------------------------------
  *
  * SQL functions to support regression test
