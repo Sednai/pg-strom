@@ -759,7 +759,7 @@ pgstrom_random_setseed(PG_FUNCTION_ARGS)
 }
 PG_FUNCTION_INFO_V1(pgstrom_random_setseed);
 
-static cl_long
+static int64_t
 __random(void)
 {
 	if (!pgstrom_random_seed_set)
@@ -767,7 +767,7 @@ __random(void)
 		pgstrom_random_seed = (unsigned int)MyProcPid ^ 0xdeadbeaf;
 		pgstrom_random_seed_set = true;
 	}
-	return (cl_ulong)rand_r(&pgstrom_random_seed);
+	return (uint64_t)rand_r(&pgstrom_random_seed);
 }
 
 static inline double
@@ -792,7 +792,7 @@ pgstrom_random_int(PG_FUNCTION_ARGS)
 	float8		ratio = (!PG_ARGISNULL(0) ? PG_GETARG_FLOAT8(0) : 0.0);
 	int64		lower = (!PG_ARGISNULL(1) ? PG_GETARG_INT64(1) : 0);
 	int64		upper = (!PG_ARGISNULL(2) ? PG_GETARG_INT64(2) : INT_MAX);
-	cl_ulong	v;
+	uint64_t	v;
 
 	if (upper < lower)
 		elog(ERROR, "%s: lower bound is larger than upper", __FUNCTION__);
@@ -830,7 +830,7 @@ pgstrom_random_date(PG_FUNCTION_ARGS)
 	float8		ratio = (!PG_ARGISNULL(0) ? PG_GETARG_FLOAT8(0) : 0.0);
 	DateADT		lower;
 	DateADT		upper;
-	cl_ulong	v;
+	uint64_t	v;
 
 	if (!PG_ARGISNULL(1))
 		lower = PG_GETARG_DATEADT(1);
@@ -859,7 +859,7 @@ pgstrom_random_time(PG_FUNCTION_ARGS)
 	float8		ratio = (!PG_ARGISNULL(0) ? PG_GETARG_FLOAT8(0) : 0.0);
 	TimeADT		lower = 0;
 	TimeADT		upper = HOURS_PER_DAY * USECS_PER_HOUR - 1;
-	cl_ulong	v;
+	uint64_t	v;
 
 	if (!PG_ARGISNULL(1))
 		lower = PG_GETARG_TIMEADT(1);
@@ -884,7 +884,7 @@ pgstrom_random_timetz(PG_FUNCTION_ARGS)
 	TimeADT		lower = 0;
 	TimeADT		upper = HOURS_PER_DAY * USECS_PER_HOUR - 1;
 	TimeTzADT  *temp;
-	cl_ulong	v;
+	uint64_t	v;
 
 	if (!PG_ARGISNULL(1))
 		lower = PG_GETARG_TIMEADT(1);
@@ -913,7 +913,7 @@ pgstrom_random_timestamp(PG_FUNCTION_ARGS)
 	float8		ratio = (!PG_ARGISNULL(0) ? PG_GETARG_FLOAT8(0) : 0.0);
 	Timestamp	lower;
 	Timestamp	upper;
-	cl_ulong	v;
+	uint64_t	v;
 	struct pg_tm tm;
 
 	if (!PG_ARGISNULL(1))
@@ -952,18 +952,18 @@ pgstrom_random_macaddr(PG_FUNCTION_ARGS)
 {
 	float8		ratio = (!PG_ARGISNULL(0) ? PG_GETARG_FLOAT8(0) : 0.0);
 	macaddr	   *temp;
-	cl_ulong	lower;
-	cl_ulong	upper;
-	cl_ulong	v, x;
+	uint64_t	lower;
+	uint64_t	upper;
+	uint64_t	v, x;
 
 	if (PG_ARGISNULL(1))
 		lower = 0xabcd00000000UL;
 	else
 	{
 		temp = PG_GETARG_MACADDR_P(1);
-		lower = (((cl_ulong)temp->a << 40) | ((cl_ulong)temp->b << 32) |
-				 ((cl_ulong)temp->c << 24) | ((cl_ulong)temp->d << 16) |
-				 ((cl_ulong)temp->e <<  8) | ((cl_ulong)temp->f));
+		lower = (((uint64_t)temp->a << 40) | ((uint64_t)temp->b << 32) |
+				 ((uint64_t)temp->c << 24) | ((uint64_t)temp->d << 16) |
+				 ((uint64_t)temp->e <<  8) | ((uint64_t)temp->f));
 	}
 
 	if (PG_ARGISNULL(2))
@@ -971,9 +971,9 @@ pgstrom_random_macaddr(PG_FUNCTION_ARGS)
 	else
 	{
 		temp = PG_GETARG_MACADDR_P(2);
-		upper = (((cl_ulong)temp->a << 40) | ((cl_ulong)temp->b << 32) |
-				 ((cl_ulong)temp->c << 24) | ((cl_ulong)temp->d << 16) |
-				 ((cl_ulong)temp->e <<  8) | ((cl_ulong)temp->f));
+		upper = (((uint64_t)temp->a << 40) | ((uint64_t)temp->b << 32) |
+				 ((uint64_t)temp->c << 24) | ((uint64_t)temp->d << 16) |
+				 ((uint64_t)temp->e <<  8) | ((uint64_t)temp->f));
 	}
 
 	if (upper < lower)
@@ -1004,7 +1004,7 @@ pgstrom_random_inet(PG_FUNCTION_ARGS)
 	float8		ratio = (!PG_ARGISNULL(0) ? PG_GETARG_FLOAT8(0) : 0.0);
 	inet	   *temp;
 	int			i, j, bits;
-	cl_ulong	v;
+	uint64_t	v;
 
 	if (generate_null(ratio))
 		PG_RETURN_NULL();
@@ -1037,7 +1037,7 @@ pgstrom_random_inet(PG_FUNCTION_ARGS)
 			temp->inet_data.ipaddr[i--] = (v & 0xff);
 		else
 		{
-			cl_uint		mask = (1 << bits) - 1;
+			uint32_t		mask = (1 << bits) - 1;
 
 			temp->inet_data.ipaddr[i] &= ~(mask);
 			temp->inet_data.ipaddr[i] |= (v & mask);
@@ -1059,7 +1059,7 @@ pgstrom_random_text(PG_FUNCTION_ARGS)
 	text	   *temp;
 	char	   *pos;
 	int			i, j, n;
-	cl_ulong	v;
+	uint64_t	v;
 
 	if (generate_null(ratio))
 		PG_RETURN_NULL();
@@ -1097,11 +1097,11 @@ pgstrom_random_text_length(PG_FUNCTION_ARGS)
 		"abcdefghijklmnopqrstuvwxyz"
 		"0123456789+/";
 	float8		ratio = (!PG_ARGISNULL(0) ? PG_GETARG_FLOAT8(0) : 0.0);
-	cl_int		maxlen;
+	int32_t		maxlen;
 	text	   *temp;
 	char	   *pos;
 	int			i, j, n;
-	cl_ulong	v = 0;
+	uint64_t	v = 0;
 
 	if (generate_null(ratio))
 		PG_RETURN_NULL();
@@ -1163,7 +1163,12 @@ pgstrom_random_int4range(PG_FUNCTION_ARGS)
 
 	if (generate_null(ratio))
 		PG_RETURN_NULL();
-	type_oid = get_type_oid("int4range", PG_CATALOG_NAMESPACE, false);
+	type_oid = GetSysCacheOid2(TYPENAMENSP,
+							   Anum_pg_type_oid,
+							   CStringGetDatum("int4range"),
+							   ObjectIdGetDatum(PG_CATALOG_NAMESPACE));
+	if (!OidIsValid(type_oid))
+		elog(ERROR, "type 'int4range' is not defined");
 	typcache = range_get_typcache(fcinfo, type_oid);
 	x = lower + __random() % (upper - lower);
 	y = lower + __random() % (upper - lower);
@@ -1185,7 +1190,12 @@ pgstrom_random_int8range(PG_FUNCTION_ARGS)
 
 	if (generate_null(ratio))
 		PG_RETURN_NULL();
-	type_oid = get_type_oid("int8range", PG_CATALOG_NAMESPACE, false);
+	type_oid = GetSysCacheOid2(TYPENAMENSP,
+							   Anum_pg_type_oid,
+							   CStringGetDatum("int8range"),
+							   ObjectIdGetDatum(PG_CATALOG_NAMESPACE));
+	if (!OidIsValid(type_oid))
+		elog(ERROR, "type 'int8range' is not defined");
 	typcache = range_get_typcache(fcinfo, type_oid);
 	v = (__random() << 31) | __random();
 	x = lower + v % (upper - lower);
@@ -1207,7 +1217,7 @@ pgstrom_random_tsrange(PG_FUNCTION_ARGS)
 	TypeCacheEntry *typcache;
 	Oid			type_oid;
 	Timestamp	x, y;
-	cl_ulong	v;
+	uint64_t	v;
 
 	if (generate_null(ratio))
 		PG_RETURN_NULL();
@@ -1232,8 +1242,12 @@ pgstrom_random_tsrange(PG_FUNCTION_ARGS)
 	}
 	if (upper < lower)
 		elog(ERROR, "%s: lower bound is larger than upper", __FUNCTION__);
-
-	type_oid = get_type_oid("tsrange", PG_CATALOG_NAMESPACE, false);
+	type_oid = GetSysCacheOid2(TYPENAMENSP,
+							   Anum_pg_type_oid,
+							   CStringGetDatum("tsrange"),
+							   ObjectIdGetDatum(PG_CATALOG_NAMESPACE));
+	if (!OidIsValid(type_oid))
+		elog(ERROR, "type 'tsrange' is not defined");
 	typcache = range_get_typcache(fcinfo, type_oid);
 	v = (__random() << 31) | __random();
 	x = lower + v % (upper - lower);
@@ -1255,7 +1269,7 @@ pgstrom_random_tstzrange(PG_FUNCTION_ARGS)
 	TypeCacheEntry *typcache;
 	Oid			type_oid;
 	Timestamp	x, y;
-	cl_ulong	v;
+	uint64_t	v;
 
 	if (generate_null(ratio))
 		PG_RETURN_NULL();
@@ -1280,8 +1294,12 @@ pgstrom_random_tstzrange(PG_FUNCTION_ARGS)
 	}
 	if (upper < lower)
 		elog(ERROR, "%s: lower bound is larger than upper", __FUNCTION__);
-
-	type_oid = get_type_oid("tstzrange", PG_CATALOG_NAMESPACE, false);
+	type_oid = GetSysCacheOid2(TYPENAMENSP,
+							   Anum_pg_type_oid,
+							   CStringGetDatum("tstzrange"),
+							   ObjectIdGetDatum(PG_CATALOG_NAMESPACE));
+	if (!OidIsValid(type_oid))
+		elog(ERROR, "type 'tstzrange' is not defined");
 	typcache = range_get_typcache(fcinfo, type_oid);
 	v = (__random() << 31) | __random();
 	x = lower + v % (upper - lower);
@@ -1316,7 +1334,12 @@ pgstrom_random_daterange(PG_FUNCTION_ARGS)
 	if (upper < lower)
 		elog(ERROR, "%s: lower bound is larger than upper", __FUNCTION__);
 
-	type_oid = get_type_oid("daterange", PG_CATALOG_NAMESPACE, false);
+	type_oid = GetSysCacheOid2(TYPENAMENSP,
+							   Anum_pg_type_oid,
+							   CStringGetDatum("daterange"),
+							   ObjectIdGetDatum(PG_CATALOG_NAMESPACE));
+	if (!OidIsValid(type_oid))
+		elog(ERROR, "type 'daterange' is not defined");
 	typcache = range_get_typcache(fcinfo, type_oid);
 	x = lower + __random() % (upper - lower);
 	y = lower + __random() % (upper - lower);
