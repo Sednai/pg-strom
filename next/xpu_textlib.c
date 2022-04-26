@@ -163,3 +163,4 @@ sql_bpchar_hash(kern_context*kcxt,
  * ----------------------------------------------------------------
  */
 PGSTROM_VARLENA_DEVTYPE_TEMPLATE(text)
+PGSTROM_ALIAS_DEVTYPE_TEMPLATE(varchar, text)

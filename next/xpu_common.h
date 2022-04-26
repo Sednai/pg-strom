@@ -1099,6 +1099,10 @@ typedef struct toast_compress_header
 	__PGSTROM_DEVTYPE_VARLENA_DECLARATION(NAME)						\
 	__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)
 
+#define PGSTROM_ALIAS_DEVTYPE_DECLARATION(NAME,ALIAS)	\
+	typedef sql_##ALIAS##_t sql_##NAME##_t;				\
+	__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)
+
 #include "xpu_basetype.h"
 #include "xpu_numeric.h"
 #include "xpu_textlib.h"

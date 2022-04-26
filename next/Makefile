@@ -19,7 +19,7 @@ PGSTROM_RELEASE := devel
 __XPU_COMMON_OBJS = xpu_basetype.o xpu_numeric.o \
                     xpu_timelib.o xpu_textlib.o xpu_misclib.o
 
-__STROM_OBJS = main.o shmbuf.o extra.o \
+__STROM_OBJS = main.o shmbuf.o extra.o codegen.o misc.o \
                gpu_device.o \
                $(__XPU_COMMON_OBJS) \
                float2.o tinyint.o

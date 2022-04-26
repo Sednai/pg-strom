@@ -12,6 +12,29 @@
 #ifndef PG_UTILS_H
 #define PG_UTILS_H
 
+
+/*
+ * transformation from align character into width
+ */
+static inline int
+typealign_get_width(char type_align)
+{
+	switch (type_align)
+	{
+		case 'c':
+			return 1;
+		case 's':
+			return ALIGNOF_SHORT;
+		case 'i':
+			return ALIGNOF_INT;
+		case 'd':
+			return ALIGNOF_DOUBLE;
+		default:
+			elog(ERROR, "unexpected type alignment: %c", type_align);
+	}
+	return -1;  /* be compiler quiet */
+}
+
 /*
  * get_next_log2
  *

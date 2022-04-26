@@ -12,6 +12,32 @@
 #ifndef XPU_TEXTLIB_H
 #define XPU_TEXTLIB_H
 
+#ifdef __STROM_HOST__
+#define PGSTROM_VARLENA_DEVTYPE_HASH_TEMPLATE(NAME)				\
+	PUBLIC_FUNCTION(uint32_t)									\
+	devtype_##NAME##_hash(bool isnull, Datum value)				\
+	{															\
+	    sql_##NAME##_t	temp;									\
+		uint32_t		hash;									\
+		void		   *addr;									\
+		DECL_KERNEL_CONTEXT(u,NULL,0);							\
+		addr = (isnull ? NULL : DatumGetPointer(value));		\
+		if (!sql_##NAME##_datum_ref(&u.kcxt, &temp, addr) ||	\
+			!sql_##NAME##_hash(&u.kcxt, &hash, &temp))			\
+			pg_kern_ereport(&u.kcxt);							\
+		return hash;											\
+	}
+#define PGSTROM_ALIAS_DEVTYPE_HASH_TEMPLATE(NAME,ALIAS)			\
+	PUBLIC_FUNCTION(uint32_t)									\
+	devtype_##NAME##_hash(bool isnull, Datum value)				\
+	{															\
+		return devtype_##ALIAS##_hash(isnull, value);			\
+	}
+#else
+#define PGSTROM_VARLENA_DEVTYPE_HASH_TEMPLATE(NAME)
+#define PGSTROM_ALIAS_DEVTYPE_HASH_TEMPLATE(NAME,ALIAS)
+#endif	/* __STROM_HOST__ */
+
 #define PGSTROM_VARLENA_DEVTYPE_TEMPLATE(NAME)							\
 	PUBLIC_FUNCTION(bool)												\
 	sql_##NAME##_datum_ref(kern_context *kcxt,							\
@@ -105,10 +131,53 @@
 			return false;												\
 		}																\
 		return true;													\
-	}
+	}																	\
+	PGSTROM_VARLENA_DEVTYPE_HASH_TEMPLATE(NAME)
+
+#define PGSTROM_ALIAS_DEVTYPE_TEMPLATE(NAME,ALIAS)				\
+	PUBLIC_FUNCTION(bool)										\
+	sql_##NAME##_datum_ref(kern_context *kcxt,					\
+						   sql_##NAME##_t *result,				\
+						   void *addr)							\
+	{															\
+		return sql_##ALIAS##_datum_ref(kcxt,result,addr);		\
+	}															\
+	PUBLIC_FUNCTION(bool)										\
+	sql_##NAME##_param_ref(kern_context *kcxt,					\
+						   sql_##NAME##_t *result,				\
+						   uint32_t param_id)					\
+	{															\
+		return sql_##ALIAS##_param_ref(kcxt,result,param_id);	\
+	}															\
+	PUBLIC_FUNCTION(bool)										\
+	arrow_##NAME##_datum_ref(kern_context *kcxt,				\
+							 sql_##NAME##_t *result,			\
+							 kern_data_store *kds,				\
+							 kern_colmeta *cmeta,				\
+							 uint32_t rowidx)					\
+	{															\
+		return arrow_##ALIAS##_datum_ref(kcxt,result,			\
+										 kds,cmeta,rowidx);		\
+	}															\
+	PUBLIC_FUNCTION(int)										\
+	sql_##NAME##_datum_store(kern_context *kcxt,				\
+							 char *buffer,						\
+							 sql_##NAME##_t *datum)				\
+	{															\
+		return sql_##ALIAS##_datum_store(kcxt,buffer,datum);	\
+	}															\
+	PUBLIC_FUNCTION(bool)										\
+	sql_##NAME##_hash(kern_context*kcxt,						\
+					  uint32_t *p_hash,							\
+					  sql_##NAME##_t*datum)						\
+	{															\
+		return sql_##ALIAS##_hash(kcxt, p_hash, datum);			\
+	}															\
+	PGSTROM_ALIAS_DEVTYPE_HASH_TEMPLATE(NAME,ALIAS)
 
 PGSTROM_VARLENA_DEVTYPE_DECLARATION(bytea)
-PGSTROM_VARLENA_DEVTYPE_DECLARATION(text)
 PGSTROM_VARLENA_DEVTYPE_DECLARATION(bpchar)
+PGSTROM_VARLENA_DEVTYPE_DECLARATION(text)
+	PGSTROM_ALIAS_DEVTYPE_DECLARATION(varchar, text)
 
 #endif  /* XPU_TEXTLIB_H */

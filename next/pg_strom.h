@@ -28,6 +28,7 @@
 #include "catalog/pg_extension.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_type.h"
+#include "commands/extension.h"
 #include "commands/typecmds.h"
 #include "common/hashfn.h"
 #include "common/int.h"
@@ -47,7 +48,9 @@
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/inet.h"
+#include "utils/inval.h"
 #include "utils/jsonb.h"
+#include "utils/lsyscache.h"
 #include "utils/rangetypes.h"
 #include "utils/rel.h"
 #include "utils/resowner.h"
@@ -90,32 +93,51 @@ extern int		numGpuDevAttrs;
 #define GPUKERNEL_MAX_SM_MULTIPLICITY	4
 
 /*
+ * OpCode for device expressions/types/functions
+ */
+
+#define EXPR_OPCODE(NAME)			ExprOpCode__##NAME,
+#define TYPE_OPCODE(NAME,a,b)		TypeOpCode__##NAME,
+#define FUNC_OPCODE(NAME)			FuncOpCode__##NAME,
+typedef enum {
+	XpuOpCode__MinValue = 1000,
+#include "xpu_opcodes.h"
+	XpuOpCode__MaxValue,
+} XpuOpCode;
+#undef EXPR_OPCODE
+#undef TYPE_OPCODE
+#undef FUNC_OPCODE
+
+/*
  * devtype/devfunc/devcast definitions
  */
 #define DEVKERNEL__NVIDIA_GPU		0x0001U		/* CUDA-based GPU */
 #define DEVKERNEL__NVIDIA_DPU		0x0002U		/* BlueField-X DPU */
 #define DEVKERNEL__ARMv8_SPU		0x0004U		/* ARMv8-based SPU */
-#define DEVKERNEL__ANY				0x0007U
+#define DEVKERNEL__ANY				0x0007U		/* Runnable on xPU */
 struct devtype_info;
 struct devfunc_info;
 struct devcast_info;
 
-typedef uint32 (*devtype_hashfunc_f)(struct devtype_info *dtype, Datum datum);
+typedef uint32_t (*devtype_hashfunc_f)(bool isnull, Datum value);
 
 typedef struct devtype_info
 {
 	dlist_node	chain;
-	uint32		hashvalue;
+	uint32_t	hash;
+	XpuOpCode	type_code;
 	Oid			type_oid;
 	uint32		type_flags;
 	int16		type_length;
 	int16		type_align;
 	bool		type_byval;
+	bool		type_is_negative;
 	const char *type_name;
+	const char *type_extension;
+	devtype_hashfunc_f type_hashfunc;
 	/* oid of type related functions */
 	Oid			type_eqfunc;
 	Oid			type_cmpfunc;
-	int			type_extra_sz;	/* extra buffer size */
 	/* element type of array, if type is array */
 	struct devtype_info *type_element;
 	/* attribute of sub-fields, if type is composite */
@@ -200,10 +222,9 @@ extern bool		pgstrom_init_gpu_device(void);
 /*
  * misc.c
  */
-extern Oid		get_object_extension_oid(Oid class_id,
-										 Oid object_id,
-										 int32 objsub_id,
-										 bool missing_ok);
+extern char	   *get_type_name(Oid type_oid, bool missing_ok);
+extern List	   *bms_to_pglist(const Bitmapset *bms);
+extern Bitmapset *bms_from_pglist(List *pglist);
 extern ssize_t	__readFile(int fdesc, void *buffer, size_t nbytes);
 extern ssize_t	__preadFile(int fdesc, void *buffer, size_t nbytes, off_t f_pos);
 extern ssize_t	__writeFile(int fdesc, const void *buffer, size_t nbytes);

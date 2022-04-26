@@ -79,6 +79,7 @@ _PG_init(void)
 	/* init pg-strom infrastructure */
 	pgstrom_init_extra();
 	pgstrom_init_shmbuf();
+	pgstrom_init_codegen();
 
 	/* dump version number */
 	elog(LOG, "PG-Strom version %s built for PostgreSQL %s (git: %s)",
