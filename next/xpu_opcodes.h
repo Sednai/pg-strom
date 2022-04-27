@@ -9,6 +9,8 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the PostgreSQL License.
  */
+
+/* extension names */
 #ifndef EXPR_OPCODE
 #define EXPR_OPCODE(NAME)
 #endif
@@ -61,57 +63,60 @@ TYPE_OPCODE(inet, INETOID, NULL)
 #endif
 /* most device functions are sufficient with __FUNC_OPCODE */
 #define __FUNC_OPCODE(FUNC_NAME,FUNC_ARGS,EXTENSION)		\
-	FUNC_OPCODE(FUNC_NAME,FUNC_ARGS,DEVKERNEL__ANY,FUNC_NAME,EXTENSION)
+	FUNC_OPCODE(FUNC_NAME,FUNC_ARGS,DEVKERN__ANY,FUNC_NAME,EXTENSION)
+#define __FUNC_LOCALE_OPCODE(FUNC_NAME,FUNC_ARGS,EXTENSION)	\
+	FUNC_OPCODE(FUNC_NAME,FUNC_ARGS,DEVFUNC__LOCALE_AWARE|DEVKERN__ANY,FUNC_NAME,EXTENSION)
+
 /* type cast functions */
-FUNC_OPCODE(bool, int4,   DEVKERNEL__ANY, int4_to_bool, NULL)
-FUNC_OPCODE(int1, int2,   DEVKERNEL__ANY, int2_to_int1, "pg_strom")
-FUNC_OPCODE(int1, int4,   DEVKERNEL__ANY, int4_to_int1, "pg_strom")
-FUNC_OPCODE(int1, int8,   DEVKERNEL__ANY, int8_to_int1, "pg_strom")
-FUNC_OPCODE(int1, float2, DEVKERNEL__ANY, float2_to_int1, "pg_strom")
-FUNC_OPCODE(int1, float4, DEVKERNEL__ANY, float4_to_int1, "pg_strom")
-FUNC_OPCODE(int1, float8, DEVKERNEL__ANY, float8_to_int1, "pg_strom")
+FUNC_OPCODE(bool, int4,   DEVKERN__ANY, int4_to_bool, NULL)
+FUNC_OPCODE(int1, int2,   DEVKERN__ANY, int2_to_int1, "pg_strom")
+FUNC_OPCODE(int1, int4,   DEVKERN__ANY, int4_to_int1, "pg_strom")
+FUNC_OPCODE(int1, int8,   DEVKERN__ANY, int8_to_int1, "pg_strom")
+FUNC_OPCODE(int1, float2, DEVKERN__ANY, float2_to_int1, "pg_strom")
+FUNC_OPCODE(int1, float4, DEVKERN__ANY, float4_to_int1, "pg_strom")
+FUNC_OPCODE(int1, float8, DEVKERN__ANY, float8_to_int1, "pg_strom")
 
-FUNC_OPCODE(int2, int1,   DEVKERNEL__ANY, int1_to_int2, "pg_strom")
-FUNC_OPCODE(int2, int4,   DEVKERNEL__ANY, int4_to_int2, NULL)
-FUNC_OPCODE(int2, int8,   DEVKERNEL__ANY, int8_to_int2, NULL)
-FUNC_OPCODE(int2, float2, DEVKERNEL__ANY, float2_to_int2, "pg_strom")
-FUNC_OPCODE(int2, float4, DEVKERNEL__ANY, float4_to_int2, NULL)
-FUNC_OPCODE(int2, float8, DEVKERNEL__ANY, float8_to_int2, NULL)
+FUNC_OPCODE(int2, int1,   DEVKERN__ANY, int1_to_int2, "pg_strom")
+FUNC_OPCODE(int2, int4,   DEVKERN__ANY, int4_to_int2, NULL)
+FUNC_OPCODE(int2, int8,   DEVKERN__ANY, int8_to_int2, NULL)
+FUNC_OPCODE(int2, float2, DEVKERN__ANY, float2_to_int2, "pg_strom")
+FUNC_OPCODE(int2, float4, DEVKERN__ANY, float4_to_int2, NULL)
+FUNC_OPCODE(int2, float8, DEVKERN__ANY, float8_to_int2, NULL)
 
-FUNC_OPCODE(int4, int1,   DEVKERNEL__ANY, int1_to_int4, "pg_strom")
-FUNC_OPCODE(int4, int2,   DEVKERNEL__ANY, int2_to_int4, NULL)
-FUNC_OPCODE(int4, int8,   DEVKERNEL__ANY, int8_to_int4, NULL)
-FUNC_OPCODE(int4, float2, DEVKERNEL__ANY, float2_to_int4, "pg_strom")
-FUNC_OPCODE(int4, float4, DEVKERNEL__ANY, float4_to_int4, NULL)
-FUNC_OPCODE(int4, float8, DEVKERNEL__ANY, float8_to_int4, NULL)
+FUNC_OPCODE(int4, int1,   DEVKERN__ANY, int1_to_int4, "pg_strom")
+FUNC_OPCODE(int4, int2,   DEVKERN__ANY, int2_to_int4, NULL)
+FUNC_OPCODE(int4, int8,   DEVKERN__ANY, int8_to_int4, NULL)
+FUNC_OPCODE(int4, float2, DEVKERN__ANY, float2_to_int4, "pg_strom")
+FUNC_OPCODE(int4, float4, DEVKERN__ANY, float4_to_int4, NULL)
+FUNC_OPCODE(int4, float8, DEVKERN__ANY, float8_to_int4, NULL)
 
-FUNC_OPCODE(int8, int1,   DEVKERNEL__ANY, int1_to_int8, "pg_strom")
-FUNC_OPCODE(int8, int2,   DEVKERNEL__ANY, int4_to_int8, NULL)
-FUNC_OPCODE(int8, int8,   DEVKERNEL__ANY, int8_to_int8, NULL)
-FUNC_OPCODE(int8, float2, DEVKERNEL__ANY, float2_to_int8, "pg_strom")
-FUNC_OPCODE(int8, float4, DEVKERNEL__ANY, float4_to_int8, NULL)
-FUNC_OPCODE(int8, float8, DEVKERNEL__ANY, float8_to_int8, NULL)
+FUNC_OPCODE(int8, int1,   DEVKERN__ANY, int1_to_int8, "pg_strom")
+FUNC_OPCODE(int8, int2,   DEVKERN__ANY, int4_to_int8, NULL)
+FUNC_OPCODE(int8, int8,   DEVKERN__ANY, int8_to_int8, NULL)
+FUNC_OPCODE(int8, float2, DEVKERN__ANY, float2_to_int8, "pg_strom")
+FUNC_OPCODE(int8, float4, DEVKERN__ANY, float4_to_int8, NULL)
+FUNC_OPCODE(int8, float8, DEVKERN__ANY, float8_to_int8, NULL)
 
-FUNC_OPCODE(float2, int1, DEVKERNEL__ANY, int1_to_float2, "pg_strom")
-FUNC_OPCODE(float2, int2, DEVKERNEL__ANY, int2_to_float2, "pg_strom")
-FUNC_OPCODE(float2, int4, DEVKERNEL__ANY, int4_to_float2, "pg_strom")
-FUNC_OPCODE(float2, int8, DEVKERNEL__ANY, int8_to_float2, "pg_strom")
-FUNC_OPCODE(float2, float4, DEVKERNEL__ANY, float4_to_float2, "pg_strom")
-FUNC_OPCODE(float2, float8, DEVKERNEL__ANY, float8_to_float2, "pg_strom")
+FUNC_OPCODE(float2, int1, DEVKERN__ANY, int1_to_float2, "pg_strom")
+FUNC_OPCODE(float2, int2, DEVKERN__ANY, int2_to_float2, "pg_strom")
+FUNC_OPCODE(float2, int4, DEVKERN__ANY, int4_to_float2, "pg_strom")
+FUNC_OPCODE(float2, int8, DEVKERN__ANY, int8_to_float2, "pg_strom")
+FUNC_OPCODE(float2, float4, DEVKERN__ANY, float4_to_float2, "pg_strom")
+FUNC_OPCODE(float2, float8, DEVKERN__ANY, float8_to_float2, "pg_strom")
 
-FUNC_OPCODE(float4, int1, DEVKERNEL__ANY, int1_to_float4, "pg_strom")
-FUNC_OPCODE(float4, int2, DEVKERNEL__ANY, int2_to_float4, NULL)
-FUNC_OPCODE(float4, int4, DEVKERNEL__ANY, int4_to_float4, NULL)
-FUNC_OPCODE(float4, int8, DEVKERNEL__ANY, int8_to_float4, NULL)
-FUNC_OPCODE(float4, float2, DEVKERNEL__ANY, float2_to_float4, "pg_strom")
-FUNC_OPCODE(float4, float8, DEVKERNEL__ANY, float8_to_float4, NULL)
+FUNC_OPCODE(float4, int1, DEVKERN__ANY, int1_to_float4, "pg_strom")
+FUNC_OPCODE(float4, int2, DEVKERN__ANY, int2_to_float4, NULL)
+FUNC_OPCODE(float4, int4, DEVKERN__ANY, int4_to_float4, NULL)
+FUNC_OPCODE(float4, int8, DEVKERN__ANY, int8_to_float4, NULL)
+FUNC_OPCODE(float4, float2, DEVKERN__ANY, float2_to_float4, "pg_strom")
+FUNC_OPCODE(float4, float8, DEVKERN__ANY, float8_to_float4, NULL)
 
-FUNC_OPCODE(float8, int1, DEVKERNEL__ANY, int1_to_float8, "pg_strom")
-FUNC_OPCODE(float8, int2, DEVKERNEL__ANY, int2_to_float8, NULL)
-FUNC_OPCODE(float8, int4, DEVKERNEL__ANY, int4_to_float8, NULL)
-FUNC_OPCODE(float8, int8, DEVKERNEL__ANY, int8_to_float8, NULL)
-FUNC_OPCODE(float8, float2, DEVKERNEL__ANY, float2_to_float8, "pg_strom")
-FUNC_OPCODE(float8, float4, DEVKERNEL__ANY, float4_to_float8, NULL)
+FUNC_OPCODE(float8, int1, DEVKERN__ANY, int1_to_float8, "pg_strom")
+FUNC_OPCODE(float8, int2, DEVKERN__ANY, int2_to_float8, NULL)
+FUNC_OPCODE(float8, int4, DEVKERN__ANY, int4_to_float8, NULL)
+FUNC_OPCODE(float8, int8, DEVKERN__ANY, int8_to_float8, NULL)
+FUNC_OPCODE(float8, float2, DEVKERN__ANY, float2_to_float8, "pg_strom")
+FUNC_OPCODE(float8, float4, DEVKERN__ANY, float4_to_float8, NULL)
 
 /* '+' : add operators */
 __FUNC_OPCODE(int1pl,  int1/int1, "pg_strom")
@@ -453,3 +458,27 @@ __FUNC_OPCODE(int2shl, int2/int4, NULL)
 __FUNC_OPCODE(int4shl, int4/int4, NULL)
 __FUNC_OPCODE(int8shl, int8/int4, NULL)
 
+/* LIKE operators */
+__FUNC_OPCODE(like, text/text, NULL)
+__FUNC_OPCODE(textlike, text/text, NULL)
+__FUNC_OPCODE(bpcharlike, bpchar/text, NULL)
+__FUNC_OPCODE(notlike, text/text, NULL)
+__FUNC_OPCODE(textnlike, text/text, NULL)
+__FUNC_OPCODE(bpcharnlike, bpchar/text, NULL)	
+__FUNC_LOCALE_OPCODE(texticlike, text/text, NULL)
+__FUNC_LOCALE_OPCODE(bpchariclike, bpchar/text, NULL)
+__FUNC_LOCALE_OPCODE(texticnlike, text/text, NULL)
+__FUNC_LOCALE_OPCODE(bpcharicnlike, bpchar/text, NULL)
+
+/* String operations */
+__FUNC_OPCODE(textcat, text/text, NULL)
+FUNC_OPCODE(concat, text, DEVKERN__ANY, concat1, NULL)
+FUNC_OPCODE(concat, text/text, DEVKERN__ANY, concat2, NULL)
+FUNC_OPCODE(concat, text/text/text, DEVKERN__ANY, concat3, NULL)
+FUNC_OPCODE(concat, text/text/text/text, DEVKERN__ANY, concat4, NULL)
+FUNC_OPCODE(concat, text/text/text/text/text, DEVKERN__ANY, concat5, NULL)
+FUNC_OPCODE(concat, text/text/text/text/text/text, DEVKERN__ANY, concat6, NULL)
+
+#undef EXPR_OPCODE
+#undef TYPE_OPCODE
+#undef FUNC_OPCODE

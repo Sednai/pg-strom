@@ -28,6 +28,7 @@
 #include "catalog/pg_depend.h"
 #include "catalog/pg_extension.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/extension.h"
 #include "commands/typecmds.h"
@@ -37,6 +38,7 @@
 #include "libpq/pqformat.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
+#include "nodes/nodeFuncs.h"
 #include "postmaster/postmaster.h"
 #include "storage/ipc.h"
 #include "storage/fd.h"
@@ -52,6 +54,7 @@
 #include "utils/inval.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
+#include "utils/pg_locale.h"
 #include "utils/rangetypes.h"
 #include "utils/rel.h"
 #include "utils/resowner.h"
@@ -101,21 +104,21 @@ extern int		numGpuDevAttrs;
 #define TYPE_OPCODE(NAME,a,b)		TypeOpCode__##NAME,
 #define FUNC_OPCODE(a,b,c,NAME,d)	FuncOpCode__##NAME,
 typedef enum {
-	XpuOpCode__MinValue = 1000,
+	XpuOpCode__Invalid = 0,
 #include "xpu_opcodes.h"
-	XpuOpCode__MaxValue,
+	XpuOpCode__BuiltInMax,
 } XpuOpCode;
-#undef EXPR_OPCODE
-#undef TYPE_OPCODE
-#undef FUNC_OPCODE
 
 /*
  * devtype/devfunc/devcast definitions
  */
-#define DEVKERNEL__NVIDIA_GPU		0x0001U		/* CUDA-based GPU */
-#define DEVKERNEL__NVIDIA_DPU		0x0002U		/* BlueField-X DPU */
-#define DEVKERNEL__ARMv8_SPU		0x0004U		/* ARMv8-based SPU */
-#define DEVKERNEL__ANY				0x0007U		/* Runnable on xPU */
+#define DEVKERN__NVIDIA_GPU			0x0001U		/* CUDA-based GPU */
+#define DEVKERN__NVIDIA_DPU			0x0002U		/* BlueField-X DPU */
+#define DEVKERN__ARMv8_SPU			0x0004U		/* ARMv8-based SPU */
+#define DEVKERN__ANY				0x0007U		/* Runnable on xPU */
+#define DEVFUNC__LOCALE_AWARE		0x0100U		/* Device function is locale aware,
+												 * thus, available only if "C" or
+												 * no locale configuration */
 struct devtype_info;
 struct devfunc_info;
 struct devcast_info;
@@ -143,9 +146,21 @@ typedef struct devtype_info
 	struct devtype_info *type_element;
 	/* attribute of sub-fields, if type is composite */
 	int			comp_nfields;
-	struct devtype_info *comp_subtypes[FLEXIBLE_ARRAY_MEMBER];
+	struct devtype_info *comp_subtypes[1];
 } devtype_info;
 
+typedef struct devfunc_info
+{
+	dlist_node	chain;
+	uint32_t	hash;
+	const char *func_extension;
+	const char *func_name;
+	Oid			func_oid;
+	uint32_t	func_flags;
+	bool		func_is_negative;
+	int			func_nargs;
+	struct devtype_info *func_argtypes[1];
+} devfunc_info;
 
 
 
@@ -199,7 +214,9 @@ extern void		pgstrom_init_shmbuf(void);
  * codegen.c
  */
 extern devtype_info *pgstrom_devtype_lookup(Oid type_oid);
-
+extern devfunc_info *pgstrom_devfunc_lookup(Oid func_oid,
+											List *func_args,
+											Oid func_collid);
 extern void		pgstrom_init_codegen(void);
 
 /*
