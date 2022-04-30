@@ -16,9 +16,6 @@ PGSTROM_RELEASE := devel
 #
 # Source of PG-Strom host code
 #
-__XPU_COMMON_OBJS = xpu_basetype.o xpu_numeric.o \
-                    xpu_timelib.o xpu_textlib.o xpu_misclib.o
-
 __STROM_OBJS = main.o shmbuf.o extra.o codegen.o misc.o \
                gpu_device.o \
                $(__XPU_COMMON_OBJS) \
@@ -26,20 +23,25 @@ __STROM_OBJS = main.o shmbuf.o extra.o codegen.o misc.o \
 STROM_OBJS = $(addprefix $(STROM_BUILD_ROOT)/next/,$(__STROM_OBJS))
 
 #
+# Source of NVIDIA GPU device code
+#
+include $(STROM_BUILD_ROOT)/Makefile.cuda
+__CUDA_OBJS = cuda_common cuda_basetype cuda_numeric
+__CUDA_HEADERS = xpu_common.h xpu_numeric.h
+__CUDA_OPT_OBJS = $(addsuffix .fatbin,$(__CUDA_OBJS))
+__CUDA_DBG_OBJS = $(addsuffix .gfatbin,$(__CUDA_OBJS))
+CUDA_HEADERS = $(addprefix $(STROM_BUILD_ROOT)/next/,$(__CUDA_HEADERS))
+CUDA_OPT_OBJS = $(addprefix $(STROM_BUILD_ROOT)/next/,$(__CUDA_OPT_OBJS))
+CUDA_DBG_OBJS = $(addprefix $(STROM_BUILD_ROOT)/next/,$(__CUDA_DBG_OBJS))
+CUDA_OPT_MODULE = $(STROM_BUILD_ROOT)/next/pgstrom-core.fatbin
+CUDA_DBG_MODULE = $(STROM_BUILD_ROOT)/next/pgstrom-core.gfatbin
+
+
+#
 # Installation Scripts
 #
 __STROM_SQL = pg_strom--5.0.sql
 STROM_SQL = $(addprefix $(STROM_BUILD_ROOT)/sql/,$(__STROM_SQL))
-
-#
-# CUDA path and related
-#
-CUDA_PATH ?= /usr/local/cuda
-CUDA_INCLUDE_PATH ?= $(CUDA_PATH)/include
-CUDA_BIN_PATH ?= $(CUDA_PATH)/bin
-CUDA_LIB_PATH ?= $(CUDA_PATH)/lib64
-NVCC := $(CUDA_BIN_PATH)/nvcc
-MAXREGCOUNT := 128
 
 #
 # GitHash to build
@@ -83,13 +85,28 @@ PG_CPPFLAGS := $(PGSTROM_FLAGS) -I $(CUDA_INCLUDE_PATH)
 SHLIB_LINK := -L $(CUDA_LIB_PATH) -lcuda
 
 #
+# GPU Device Code
+#
+%.fatbin: %.cu $(CUDA_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+%.gfatbin: %.cu $(GPU_HEADERS)
+	$(NVCC) $(NVCC_DEBUG_FLAGS) -o $@ $<
+$(CUDA_OPT_MODULE): $(CUDA_HEADERS) $(CUDA_OPT_OBJS)
+	$(NVCC) -o $@ $(NVCC_FLAGS) --device-link --fatbin $(CUDA_OPT_OBJS)
+$(CUDA_DBG_MODULE): $(CUDA_HEADERS) $(CUDA_DBG_OBJS)
+	$(NVCC) -o $@ $(NVCC_FLAGS) --device-link --fatbin $(CUDA_DBG_OBJS)
+
+#
 # Definition of PG-Strom Extension
 #
 MODULE_big = pg_strom
 MODULEDIR  = pg_strom
 DATA = $(STROM_SQL)
 OBJS = $(STROM_OBJS)
+DATA_built = $(CUDA_OPT_MODULE) $(CUDA_DBG_MODULE)
+EXTRA_CLEAN = $(CUDA_OPT_OBJS) $(CUDA_DBG_OBJS)
 EXTENSION = pg_strom
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+

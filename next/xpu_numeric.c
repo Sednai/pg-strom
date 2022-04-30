@@ -1,147 +1,15 @@
 /*
  * xpu_numeric.c
  *
- * Collection of numeric type support on XPU(GPU/DPU/SPU)
+ * collection of numeric type support on xPU
  * ----
  * Copyright 2011-2022 (C) KaiGai Kohei <kaigai@kaigai.gr.jp>
  * Copyright 2014-2022 (C) PG-Strom Developers Team
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the PostgreSQL License.
- *
  */
 #include "xpu_common.h"
-
-/* PostgreSQL numeric data type */
-#if 0
-#define PG_DEC_DIGITS		1
-#define PG_NBASE			10
-typedef int8_t		NumericDigit;
-#endif
-
-#if 0
-#define PG_DEC_DIGITS		2
-#define PG_NBASE			100
-typedef int8_t		NumericDigit;
-#endif
-
-#if 1
-#define PG_DEC_DIGITS		4
-#define PG_NBASE			10000
-typedef int16_t	NumericDigit;
-#endif
-
-#define PG_MAX_DIGITS		40	/* Max digits of 128bit integer */
-#define PG_MAX_DATA			(PG_MAX_DIGITS / PG_DEC_DIGITS)
-
-struct NumericShort
-{
-	uint16_t		n_header;				/* Sign + display scale + weight */
-	NumericDigit	n_data[PG_MAX_DATA];	/* Digits */
-};
-typedef struct NumericShort	NumericShort;
-
-struct NumericLong
-{
-	uint16_t		n_sign_dscale;			/* Sign + display scale */
-	int16_t			n_weight;				/* Weight of 1st digit	*/
-	NumericDigit	n_data[PG_MAX_DATA];	/* Digits */
-};
-typedef struct NumericLong	NumericLong;
-
-typedef union
-{
-	uint16_t		n_header;			/* Header word */
-	NumericLong		n_long;				/* Long form (4-byte header) */
-	NumericShort	n_short;			/* Short form (2-byte header) */
-} NumericChoice;
-
-struct NumericData
-{
- 	uint32_t		vl_len_;		/* varlena header */
-	NumericChoice	choice;			/* payload */
-};
-typedef struct NumericData	NumericData;
-
-#define NUMERIC_SIGN_MASK	0xC000
-#define NUMERIC_POS			0x0000
-#define NUMERIC_NEG			0x4000
-#define NUMERIC_SHORT		0x8000
-#define NUMERIC_NAN			0xC000
-
-#define NUMERIC_FLAGBITS(n_head)	((n_head) & NUMERIC_SIGN_MASK)
-#define NUMERIC_IS_NAN(n_head)		(NUMERIC_FLAGBITS(n_head) == NUMERIC_NAN)
-#define NUMERIC_IS_SHORT(n_head)	(NUMERIC_FLAGBITS(n_head) == NUMERIC_SHORT)
-
-#define NUMERIC_SHORT_SIGN_MASK		0x2000
-#define NUMERIC_SHORT_DSCALE_MASK	0x1F80
-#define NUMERIC_SHORT_DSCALE_SHIFT	7
-#define NUMERIC_SHORT_DSCALE_MAX	(NUMERIC_SHORT_DSCALE_MASK >> \
-									 NUMERIC_SHORT_DSCALE_SHIFT)
-#define NUMERIC_SHORT_WEIGHT_SIGN_MASK 0x0040
-#define NUMERIC_SHORT_WEIGHT_MASK	0x003F
-#define NUMERIC_SHORT_WEIGHT_MAX	NUMERIC_SHORT_WEIGHT_MASK
-#define NUMERIC_SHORT_WEIGHT_MIN	(-(NUMERIC_SHORT_WEIGHT_MASK+1))
-
-#define NUMERIC_DSCALE_MASK         0x3FFF
-
-INLINE_FUNCTION(uint32_t)
-NUMERIC_NDIGITS(NumericChoice *nc, uint32_t nc_len)
-{
-	uint16_t	n_head = __Fetch(&nc->n_header);
-
-	return (NUMERIC_IS_SHORT(n_head)
-			? (nc_len - offsetof(NumericChoice, n_short.n_data))
-			: (nc_len - offsetof(NumericChoice, n_long.n_data)))
-		/ sizeof(NumericDigit);
-}
-
-INLINE_FUNCTION(NumericDigit *)
-NUMERIC_DIGITS(NumericChoice *nc)
-{
-	uint16_t	n_head = __Fetch(&nc->n_header);
-
-	return NUMERIC_IS_SHORT(n_head) ? nc->n_short.n_data : nc->n_long.n_data;
-}
-
-INLINE_FUNCTION(int)
-NUMERIC_SIGN(NumericChoice *nc)
-{
-	uint16_t	n_head = __Fetch(&nc->n_header);
-
-	if (NUMERIC_IS_SHORT(n_head))
-		return (n_head & NUMERIC_SHORT_SIGN_MASK) ? NUMERIC_NEG : NUMERIC_POS;
-	return NUMERIC_FLAGBITS(n_head);
-}
-
-INLINE_FUNCTION(uint32_t)
-NUMERIC_DSCALE(NumericChoice *nc)
-{
-	uint16_t	n_head = __Fetch(&nc->n_header);
-
-	if (NUMERIC_IS_SHORT(n_head))
-		return ((n_head & NUMERIC_SHORT_DSCALE_MASK) >> NUMERIC_SHORT_DSCALE_SHIFT);
-	return (__Fetch(&nc->n_long.n_sign_dscale) & NUMERIC_DSCALE_MASK);
-}
-
-INLINE_FUNCTION(int)
-NUMERIC_WEIGHT(NumericChoice *nc)
-{
-	uint16_t	n_head = __Fetch(&nc->n_header);
-	int			weight;
-
-	if (NUMERIC_IS_SHORT(n_head))
-	{
-		weight = (n_head) & NUMERIC_SHORT_WEIGHT_MASK;
-		if (n_head & NUMERIC_SHORT_WEIGHT_SIGN_MASK)
-			weight |= ~NUMERIC_SHORT_WEIGHT_MASK;
-	}
-	else
-	{
-		weight = __Fetch(&nc->n_long.n_weight);
-	}
-	return weight;
-}
 
 INLINE_FUNCTION(void)
 set_normalized_numeric(sql_numeric_t *result, int128_t value, int16_t weight)
@@ -164,10 +32,11 @@ set_normalized_numeric(sql_numeric_t *result, int128_t value, int16_t weight)
 STATIC_FUNCTION(bool)
 sql_numeric_from_varlena(kern_context *kcxt,
 						 sql_numeric_t *result,
-						 varlena *addr)
+						 const varlena *addr)
 {
 	uint32_t		len;
 
+	result->ops = &sql_numeric_ops;
 	if (!addr)
 	{
 		result->isnull = true;
@@ -272,33 +141,24 @@ sql_numeric_to_varlena(char *buffer, int16_t weight, int128_t value)
 	return len;
 }
 
-PUBLIC_FUNCTION(bool)
+STATIC_FUNCTION(bool)
 sql_numeric_datum_ref(kern_context *kcxt,
-					  sql_numeric_t *result,
-					  void *addr)
+					  sql_datum_t *__result,
+					  const void *addr)
 {
-	Assert(result != NULL);
-	return sql_numeric_from_varlena(kcxt, result, (varlena *)addr);
+	sql_numeric_t *result = (sql_numeric_t *)__result;
+	return sql_numeric_from_varlena(kcxt, result, (const varlena *)addr);
 }
 
-PUBLIC_FUNCTION(bool)
-sql_numeric_param_ref(kern_context *kcxt,
-					  sql_numeric_t *result,
-					  uint32_t param_id)
-{
-	void   *addr = kparam_get_value(kcxt->kparams, param_id);
-
-	return sql_numeric_from_varlena(kcxt, result, (varlena *)addr);
-}
-
-PUBLIC_FUNCTION(bool)
+STATIC_FUNCTION(bool)
 arrow_numeric_datum_ref(kern_context *kcxt,
-						sql_numeric_t *result,
+						sql_datum_t *__result,
 						kern_data_store *kds,
 						kern_colmeta *cmeta,
 						uint32_t rowidx)
 {
-	int128_t   *addr;
+	sql_numeric_t  *result = (sql_numeric_t *)__result;
+	const void	   *addr;
 
 	addr = KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx,
 									  sizeof(int128_t));
@@ -310,45 +170,39 @@ arrow_numeric_datum_ref(kern_context *kcxt,
 		 * Note that Decimal::scale is equivalent to numeric::weight.
 		 * It is the number of digits after the decimal point.
 		 */
-		set_normalized_numeric(result, *addr, cmeta->attopts.decimal.scale);
+		set_normalized_numeric(result, *((const int128_t *)addr),
+							   cmeta->attopts.decimal.scale);
 	}
+	result->ops = &sql_numeric_ops;
 	return true;
 }
 
 PUBLIC_FUNCTION(int)
 sql_numeric_datum_store(kern_context *kcxt,
 						char *buffer,
-						sql_numeric_t *datum)
+						const sql_datum_t *__arg)
 {
-	if (datum->isnull)
+	const sql_numeric_t *arg = (const sql_numeric_t *)__arg;
+
+	if (arg->isnull)
 		return 0;
-	return sql_numeric_to_varlena(buffer, datum->weight, datum->value);
+	return sql_numeric_to_varlena(buffer, arg->weight, arg->value);
 }
 
 PUBLIC_FUNCTION(bool)
-sql_numeric_hash(kern_context *kcxt,
-				 uint32_t *p_hash,
-				 sql_numeric_t *datum)
+sql_numeric_datum_hash(kern_context *kcxt,
+					   uint32_t *p_hash,
+					   const sql_datum_t *__arg)
 {
-	if (datum->isnull)
+	const sql_numeric_t *arg = (const sql_numeric_t *)__arg;
+
+	if (arg->isnull)
 		*p_hash = 0;
 	else
-		*p_hash = pg_hash_any(&datum->value,
-							  offsetof(sql_numeric_t,
-									   weight) + sizeof(int16_t));
+	{
+		*p_hash = (pg_hash_any(&arg->weight, sizeof(int16_t)) ^
+				   pg_hash_any(&arg->value, sizeof(int128_t)));
+	}
 	return true;
 }
-
-PUBLIC_FUNCTION(uint32_t)
-devtype_numeric_hash(bool isnull, Datum value)
-{
-	sql_numeric_t	temp;
-	uint32_t		hash;
-	DECL_KERNEL_CONTEXT(u,NULL,0);
-
-	if (!sql_numeric_datum_ref(&u.kcxt, &temp,
-							   isnull ? NULL : DatumGetPointer(value)) ||
-		!sql_numeric_hash(&u.kcxt, &hash, &temp))
-		pg_kern_ereport(&u.kcxt);
-	return hash;
-}
+PGSTROM_SQLTYPE_OPERATORS(numeric);

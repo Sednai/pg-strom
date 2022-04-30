@@ -11,113 +11,70 @@
  *
  */
 #include "xpu_common.h"
-#ifndef HAVE_FLOAT2
-#include "float2.h"
-#endif
 
-/*
- * sql_bool_t functions
- */
-PUBLIC_FUNCTION(bool)
-sql_bool_datum_ref(kern_context *kcxt,
-				   sql_bool_t *result,
-				   void *addr)
-{
-	if (!addr)
-		result->isnull = true;
-	else
-	{
-		result->isnull = false;
-		result->value = *((int8_t *)addr);
-	}
-	return true;
-}
-
-PUBLIC_FUNCTION(bool)
-sql_bool_param_ref(kern_context *kcxt,
-				   sql_bool_t *result,
-				   uint32_t param_id)
-{
-	void   *addr = kparam_get_value(kcxt->kparams, param_id);
-
-	return sql_bool_datum_ref(kcxt, result, addr);
-}
-
-
-PUBLIC_FUNCTION(bool)
-arrow_bool_datum_ref(kern_context *kcxt,
-					 sql_bool_t *result,
-					 kern_data_store *kds,
-					 kern_colmeta *cmeta,
-					 uint32_t rowidx)
-{																	\
-	void   *addr = KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx,
-											  sizeof(int8_t));
-	return sql_bool_datum_ref(kcxt, result, addr);
-}
-
-PUBLIC_FUNCTION(int)
-sql_bool_datum_store(kern_context *kcxt,
-					 char *buffer,
-					 sql_bool_t *datum)
-{																	\
-	if (datum->isnull)
-		return 0;
-	if (buffer)
-		*((int8_t *)buffer) = datum->value;
-	return sizeof(int8_t);
-}
-
-PUBLIC_FUNCTION(bool)
-sql_bool_hash(kern_context *kcxt,
-			  uint32_t *p_hash,
-			  sql_bool_t *datum)
-{
-	if (datum->isnull)
-		*p_hash = 0;
-	else
-		*p_hash = pg_hash_any(&datum->value, sizeof(int8_t));
-	return true;
-}
-
-PUBLIC_FUNCTION(uint32_t)
-devtype_bool_hash(bool isnull, Datum value)
-{
-	sql_bool_t	temp;
-	uint32_t	hash;
-	DECL_KERNEL_CONTEXT(u,NULL,0);
-	if (!sql_bool_datum_ref(&u.kcxt, &temp,
-							isnull ? NULL : &value) ||
-		!sql_bool_hash(&u.kcxt, &hash, &temp))
-		pg_kern_ereport(&u.kcxt);
-	return hash;
-}
-
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(int1,int8_t)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(int2,int16_t)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(int4,int32_t)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(int8,int64_t)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(float2,float2_t)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(float4,float4_t)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(float8,float8_t)
-
-/*
- * Primitive type cast functions
- */
-#define XPU_SIMPLE_TYPECAST_TEMPLATE(DST,SRC,CAST)	\
-	PUBLIC_FUNCTION(bool)							\
-	pgfn_##SRC##_to_##DST##(kern_context *kcxt,		\
-							sql_##DST##_t *result,	\
-							sql_##SRC##_t *arg)		\
-	{												\
-		result->isnull = arg->isnull;				\
-		if (!result->isnull)						\
-			result->value = CAST(arg->value);		\
-		return true;								\
-	}
-
-
-
-
-
-
+#define PGSTROM_SIMPLE_BASETYPE_TEMPLATE(NAME,BASETYPE)					\
+	STATIC_FUNCTION(bool)												\
+	sql_##NAME##_datum_ref(kern_context *kcxt,							\
+						   sql_datum_t *__result,						\
+						   const void *addr)							\
+	{																	\
+		sql_##NAME##_t *result = (sql_##NAME##_t *)__result;			\
+																		\
+		result->ops = &sql_bool_ops;									\
+		if (!addr)														\
+			result->isnull = true;										\
+		else															\
+		{																\
+			result->isnull = false;										\
+			result->value = *((const BASETYPE *)addr);					\
+		}																\
+		return true;													\
+	}																	\
+	STATIC_FUNCTION(bool)												\
+	arrow_##NAME##_datum_ref(kern_context *kcxt,						\
+							 sql_datum_t *__result,						\
+							 kern_data_store *kds,						\
+							 kern_colmeta *cmeta,						\
+							 uint32_t rowidx)							\
+	{																	\
+		const void	   *addr;											\
+																		\
+		addr = KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx,			\
+										  sizeof(BASETYPE));			\
+		return sql_##NAME##_datum_ref(kcxt, __result, addr);			\
+	}																	\
+	STATIC_FUNCTION(int)												\
+	sql_##NAME##_datum_store(kern_context *kcxt,						\
+							 char *buffer,								\
+							 const sql_datum_t *__arg)					\
+	{																	\
+		const sql_##NAME##_t *arg = (const sql_##NAME##_t *)__arg;		\
+																		\
+		if (arg->isnull)												\
+			return 0;													\
+		*((BASETYPE *)buffer) = arg->value;								\
+		return sizeof(BASETYPE);										\
+	}																	\
+	STATIC_FUNCTION(bool)												\
+	sql_##NAME##_datum_hash(kern_context *kcxt,							\
+							uint32_t *p_hash,							\
+							const sql_datum_t *__arg)					\
+	{																	\
+		const sql_##NAME##_t *arg = (const sql_##NAME##_t *)__arg;		\
+																		\
+		if (arg->isnull)												\
+			*p_hash = 0;												\
+		else															\
+			*p_hash = pg_hash_any(&arg->value, sizeof(BASETYPE));		\
+		return true;													\
+	}																	\
+	PGSTROM_SQLTYPE_OPERATORS(NAME)
+	
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(bool, int8_t);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(int1, int8_t);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(int2, int16_t);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(int4, int32_t);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(int8, int64_t);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(float2, float2_t);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(float4, float4_t);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(float8, float8_t);

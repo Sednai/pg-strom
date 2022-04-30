@@ -97,19 +97,6 @@ extern int		numGpuDevAttrs;
 #define GPUKERNEL_MAX_SM_MULTIPLICITY	4
 
 /*
- * OpCode for device expressions/types/functions
- */
-
-#define EXPR_OPCODE(NAME)			ExprOpCode__##NAME,
-#define TYPE_OPCODE(NAME,a,b)		TypeOpCode__##NAME,
-#define FUNC_OPCODE(a,b,c,NAME,d)	FuncOpCode__##NAME,
-typedef enum {
-	XpuOpCode__Invalid = 0,
-#include "xpu_opcodes.h"
-	XpuOpCode__BuiltInMax,
-} XpuOpCode;
-
-/*
  * devtype/devfunc/devcast definitions
  */
 #define DEVKERN__NVIDIA_GPU			0x0001U		/* CUDA-based GPU */

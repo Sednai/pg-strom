@@ -15,6 +15,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <string.h>
 #include "postgres_ext.h"
@@ -24,6 +25,7 @@
 /* Definition of several primitive types */
 typedef __int128	int128_t;
 #if defined(__CUDACC__)
+#include <cuda_fp16.h>
 typedef __half		float2_t;
 #elif defined(HAVE_FLOAT2)
 typedef _Float16	float2_t;
@@ -38,20 +40,20 @@ typedef double		float8_t;
  */
 #ifdef __CUDACC__
 #define INLINE_FUNCTION(RET_TYPE)				\
-	__device__ __host__ __forceinline__			\
+	__device__ __forceinline__					\
 	static RET_TYPE __attribute__ ((unused))
-#define STATIC_FUNCTION(RET_TYPE)				\
-	__device__ __host__							\
-	static RET_TYPE
-#define PUBLIC_FUNCTION(RET_TYPE)				\
-	__device__ __host__ RET_TYPE
-#define KERNEL_FUNCTION(RET_TYPE)				\
-	extern "C" __global__ RET_TYPE
+#define STATIC_FUNCTION(RET_TYPE)		__device__ static RET_TYPE
+#define PUBLIC_FUNCTION(RET_TYPE)		__device__ RET_TYPE
+#define KERNEL_FUNCTION(RET_TYPE)		extern "C" __global__ RET_TYPE
+#define EXTERN_DATA						extern __device__
+#define PUBLIC_DATA						__device__
 #else
 #define INLINE_FUNCTION(RET_TYPE)		static inline RET_TYPE
 #define STATIC_FUNCTION(RET_TYPE)		static RET_TYPE
 #define PUBLIC_FUNCTION(RET_TYPE)		RET_TYPE
 #define KERNEL_FUNCTION(RET_TYPE)		RET_TYPE
+#define EXTERN_DATA						extern
+#define PUBLIC_DATA
 #endif	/* __CUDACC__ */
 
 /*
@@ -338,14 +340,14 @@ typedef struct kern_data_extra		kern_data_extra;
  * is always aligned to MAXIMUM_ALIGNOF boundary (64bit).
  * It means we can use 32bit offset to represent up to 32GB range (35bit).
  */
-static inline uint32_t
+INLINE_FUNCTION(uint32_t)
 __kds_packed(size_t offset)
 {
 	assert((offset & ~(0xffffffffUL << MAXIMUM_ALIGNOF_SHIFT)) == 0);
 	return (uint32_t)(offset >> MAXIMUM_ALIGNOF_SHIFT);
 }
 
-static inline size_t
+INLINE_FUNCTION(size_t)
 __kds_unpack(uint32_t offset)
 {
 	return (size_t)offset << MAXIMUM_ALIGNOF_SHIFT;
@@ -1051,63 +1053,166 @@ typedef struct toast_compress_header
 
 /* ----------------------------------------------------------------
  *
+ * Definition of device functions
+ *
+ * ----------------------------------------------------------------
+ */
+#define FUNC_OPCODE(a,b,c,NAME,d)	FuncCode__##NAME,
+typedef enum {
+	FuncOpCode__Invalid = 0,
+#include "xpu_opcodes.h"
+	FuncOpCode__BuiltInMax,
+} FuncOpCode;
+
+typedef bool  (*sql_func_t)(kern_context *kcxt, ...);
+
+typedef struct sql_function_catalog_t	sql_function_catalog_t;
+
+
+/* ----------------------------------------------------------------
+ *
  * Definitions for device data types
  *
  * ----------------------------------------------------------------
  */
+#define TYPE_OPCODE(NAME,a,b)	TypeOpCode__##NAME,
+typedef enum {
+	TypeOpCode__Invalid = 0,
+#include "xpu_opcodes.h"
+	TypeOpCode__BuiltInMax,
+} TypeOpCode;
 
-/*
- * Templates for device data types
- */
-#define __PGSTROM_DEVTYPE_SIMPLE_DECLARATION(NAME,BASETYPE)	\
+typedef struct sql_datum_t		sql_datum_t;
+typedef struct sql_datum_operators sql_datum_operators;
+
+#define SQL_DATUM_COMMON_FIELD			\
+	const sql_datum_operators *ops;		\
+	bool		isnull
+
+struct sql_datum_t {
+	SQL_DATUM_COMMON_FIELD;
+};
+
+struct sql_datum_operators {
+	const char *sql_type_name;
+	TypeOpCode	sql_type_code;
+	bool	  (*sql_datum_ref)(kern_context *kcxt,
+							   sql_datum_t *result,
+							   const void *addr);
+	bool	  (*arrow_datum_ref)(kern_context *kcxt,
+								 sql_datum_t *result,
+								 kern_data_store *kds,
+								 kern_colmeta *cmeta,
+								 uint32_t rowidx);
+	int		  (*sql_datum_store)(kern_context *kcxt,
+								 char *buffer,
+								 const sql_datum_t *arg);
+	bool	  (*sql_datum_hash)(kern_context *kcxt,
+								uint32_t *p_hash,
+								const sql_datum_t *arg);
+};
+
+#define PGSTROM_SQLTYPE_SIMPLE_DECLARATION(NAME,BASETYPE)	\
 	typedef struct {										\
+		SQL_DATUM_COMMON_FIELD;								\
 		BASETYPE	value;									\
-		bool		isnull;									\
-	} sql_##NAME##_t;
-#define __PGSTROM_DEVTYPE_VARLENA_DECLARATION(NAME)			\
+	} sql_##NAME##_t;										\
+	EXTERN_DATA sql_datum_operators sql_##NAME##_ops
+#define PGSTROM_SQLTYPE_VARLENA_DECLARATION(NAME)			\
 	typedef struct {										\
+		SQL_DATUM_COMMON_FIELD;								\
+		int		length;		/* -1, if PG verlena */			\
 		char   *value;										\
-		int		length;		/* -1, if PG varlena */			\
-		bool	isnull;										\
-	} sql_##NAME##_t;
+	} sql_##NAME##_t;										\
+	EXTERN_DATA sql_datum_operators sql_##NAME##_ops
+#define PGSTROM_SQLTYPE_ALIAS_DECLARATION(NAME,ALIAS)	\
+	typedef sql_##ALIAS##_t sql_##NAME##_t
+#define PGSTROM_SQLTYPE_OPERATORS(NAME)						\
+	PUBLIC_DATA sql_datum_operators sql_##NAME##_ops = {	\
+		.sql_type_name = #NAME,								\
+		.sql_type_code = TypeOpCode__##NAME,				\
+		.sql_datum_ref = sql_##NAME##_datum_ref,			\
+		.arrow_datum_ref = arrow_##NAME##_datum_ref,		\
+		.sql_datum_store = sql_##NAME##_datum_store,		\
+		.sql_datum_hash = sql_##NAME##_datum_hash,			\
+	}
 
-#define __PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)				\
-	extern bool sql_##NAME##_datum_ref(kern_context *kcxt,			\
-									   sql_##NAME##_t *result,		\
-									   void *addr);					\
-	extern bool sql_##NAME##_param_ref(kern_context *kcxt,			\
-									   sql_##NAME##_t *result,		\
-									   uint32_t param_id);			\
-	extern bool arrow_##NAME##_datum_ref(kern_context *kcxt,		\
-										 sql_##NAME##_t *result,	\
-										 kern_data_store *kds,		\
-										 kern_colmeta *cmeta,		\
-										 uint32_t rowidx);			\
-	extern int sql_##NAME##_datum_store(kern_context *kcxt,			\
-										char *buffer,				\
-										sql_##NAME##_t *datum);		\
-	extern bool sql_##NAME##_hash(kern_context *kcxt,				\
-								  uint32_t *p_hash,					\
-								  sql_##NAME##_t *datum);			\
-	extern uint32_t devtype_##NAME##_hash(bool isnull, Datum value);
-
-#define PGSTROM_SIMPLE_DEVTYPE_DECLARATION(NAME,BASETYPE)			\
-	__PGSTROM_DEVTYPE_SIMPLE_DECLARATION(NAME,BASETYPE)				\
-	__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)
-
-#define PGSTROM_VARLENA_DEVTYPE_DECLARATION(NAME)					\
-	__PGSTROM_DEVTYPE_VARLENA_DECLARATION(NAME)						\
-	__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)
-
-#define PGSTROM_ALIAS_DEVTYPE_DECLARATION(NAME,ALIAS)	\
-	typedef sql_##ALIAS##_t sql_##NAME##_t;				\
-	__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(NAME)
-
-#include "xpu_basetype.h"
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(bool, int8_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(int1, int8_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(int2, int16_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(int4, int32_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(int8, int64_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(float2, float2_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(float4, float4_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(float8, float8_t);
 #include "xpu_numeric.h"
-#include "xpu_textlib.h"
-#include "xpu_timelib.h"
-#include "xpu_misclib.h"
+PGSTROM_SQLTYPE_VARLENA_DECLARATION(bytea);
+PGSTROM_SQLTYPE_VARLENA_DECLARATION(text);
+PGSTROM_SQLTYPE_VARLENA_DECLARATION(bpchar);
+
+//#include "xpu_timelib.h"
+
+
+#ifndef DATE_H
+typedef int32_t		DateADT;
+typedef int64_t		TimeADT;
+typedef struct
+{
+	TimeADT		time;	/* all time units other than months and years */
+	int32_t		zone;	/* numeric time zone, in seconds */
+} TimeTzADT;
+#endif
+#ifndef DATATYPE_TIMESTAMP_H
+typedef int64_t		Timestamp;
+typedef int64_t		TimestampTz;
+typedef int64_t		TimeOffset;
+typedef int32_t		fsec_t;		/* fractional seconds (in microseconds) */
+typedef struct
+{
+	TimeOffset	time;	/* all time units other than days, months and years */
+	int32_t		day;	/* days, after time for alignment */
+	int32_t		month;	/* months and years, after time for alignment */
+} Interval;
+#endif
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(date, int32_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(time, int64_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(timetz, TimeTzADT);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(timestamp, Timestamp);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(timestamptz, TimestampTz);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(interval, Interval);
+
+//#include "xpu_misclib.h"
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(money, int64_t);
+#ifndef UUID_H
+#define UUID_LEN		16
+typedef struct
+{
+	uint8_t		data[UUID_LEN];
+} pgsql_uuid_t;
+#endif
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(uuid, pgsql_uuid_t);
+
+#ifndef INET_H
+typedef struct
+{
+	uint8_t		a, b, c, d, e, f;
+} macaddr;
+
+typedef struct
+{
+	uint8_t		family;			/* PGSQL_AF_INET or PGSQL_AF_INET6 */
+	uint8_t		bits;			/* number of bits in netmask */
+	uint8_t		ipaddr[16];		/* up to 128 bits of address */
+} inet_struct;
+#endif
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(macaddr, macaddr);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(inet, inet_struct);
+
+//#include "xpu_basetype.h"
+//#include "xpu_numeric.h"
+//#include "xpu_textlib.h"
+//#include "xpu_timelib.h"
+//#include "xpu_misclib.h"
 
 /*
  * pg_array_t - array type support
@@ -1124,8 +1229,8 @@ typedef struct {
 	int			length;
 	uint32_t	start;
 	kern_colmeta *smeta;
-} sql_array_t;
-__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(array)
+} pg_array_t;
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(array, pg_array_t);
 
 /*
  * pg_composite_t - composite type support
@@ -1144,8 +1249,8 @@ typedef struct {
 	Oid			comp_typid;
 	int			comp_typmod;
 	kern_colmeta *smeta;
-} sql_composite_t;
-__PGSTROM_DEVTYPE_FUNCTION_DECLARATION(composite)
+} pg_composite_t;
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(composite, pg_composite_t);
 
 /* ----------------------------------------------------------------
  *
