@@ -29,12 +29,12 @@ include $(STROM_BUILD_ROOT)/Makefile.cuda
 __CUDA_OBJS = cuda_common cuda_basetype cuda_numeric
 __CUDA_HEADERS = xpu_common.h xpu_numeric.h
 __CUDA_OPT_OBJS = $(addsuffix .fatbin,$(__CUDA_OBJS))
-__CUDA_DBG_OBJS = $(addsuffix .gfatbin,$(__CUDA_OBJS))
+__CUDA_DBG_OBJS = $(addsuffix .debug.fatbin,$(__CUDA_OBJS))
 CUDA_HEADERS = $(addprefix $(STROM_BUILD_ROOT)/next/,$(__CUDA_HEADERS))
 CUDA_OPT_OBJS = $(addprefix $(STROM_BUILD_ROOT)/next/,$(__CUDA_OPT_OBJS))
 CUDA_DBG_OBJS = $(addprefix $(STROM_BUILD_ROOT)/next/,$(__CUDA_DBG_OBJS))
 CUDA_OPT_MODULE = $(STROM_BUILD_ROOT)/next/pgstrom-core.fatbin
-CUDA_DBG_MODULE = $(STROM_BUILD_ROOT)/next/pgstrom-core.gfatbin
+CUDA_DBG_MODULE = $(STROM_BUILD_ROOT)/next/pgstrom-core.debug.fatbin
 
 
 #
@@ -81,20 +81,8 @@ endif
 PGSTROM_FLAGS += -DPGSTROM_GITHASH=\"$(PGSTROM_GITHASH)$(PGSTROM_GITHASH_SUFFIX)\"
 PGSTROM_FLAGS += -DCUDA_MAXREGCOUNT=$(MAXREGCOUNT)
 PGSTROM_FLAGS += -DCMD_GPUINFO_PATH=\"$(shell $(PG_CONFIG) --bindir)/gpuinfo\"
-PG_CPPFLAGS := $(PGSTROM_FLAGS) -I $(CUDA_INCLUDE_PATH)
+PG_CPPFLAGS := $(PGSTROM_FLAGS) -I $(CUDA_IPATH)
 SHLIB_LINK := -L $(CUDA_LIB_PATH) -lcuda
-
-#
-# GPU Device Code
-#
-%.fatbin: %.cu $(CUDA_HEADERS)
-	$(NVCC) $(NVCC_FLAGS) -o $@ $<
-%.gfatbin: %.cu $(GPU_HEADERS)
-	$(NVCC) $(NVCC_DEBUG_FLAGS) -o $@ $<
-$(CUDA_OPT_MODULE): $(CUDA_HEADERS) $(CUDA_OPT_OBJS)
-	$(NVCC) -o $@ $(NVCC_FLAGS) --device-link --fatbin $(CUDA_OPT_OBJS)
-$(CUDA_DBG_MODULE): $(CUDA_HEADERS) $(CUDA_DBG_OBJS)
-	$(NVCC) -o $@ $(NVCC_FLAGS) --device-link --fatbin $(CUDA_DBG_OBJS)
 
 #
 # Definition of PG-Strom Extension
@@ -110,3 +98,14 @@ EXTENSION = pg_strom
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
+#
+# GPU Device Code
+#
+%.fatbin: %.cu $(CUDA_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+%.debug.fatbin: %.cu $(GPU_HEADERS)
+	$(NVCC) $(NVCC_DEBUG_FLAGS) -o $@ $<
+$(CUDA_OPT_MODULE): $(CUDA_HEADERS) $(CUDA_OPT_OBJS)
+	$(NVCC) -o $@ $(NVCC_FLAGS) --device-link --fatbin $(CUDA_OPT_OBJS)
+$(CUDA_DBG_MODULE): $(CUDA_HEADERS) $(CUDA_DBG_OBJS)
+	$(NVCC) -o $@ $(NVCC_FLAGS) --device-link --fatbin $(CUDA_DBG_OBJS)

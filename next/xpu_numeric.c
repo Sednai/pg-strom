@@ -146,8 +146,8 @@ sql_numeric_datum_ref(kern_context *kcxt,
 					  sql_datum_t *__result,
 					  const void *addr)
 {
-	sql_numeric_t *result = (sql_numeric_t *)__result;
-	return sql_numeric_from_varlena(kcxt, result, (const varlena *)addr);
+	return sql_numeric_from_varlena(kcxt, (sql_numeric_t *)__result,
+									(const varlena *)addr);
 }
 
 STATIC_FUNCTION(bool)

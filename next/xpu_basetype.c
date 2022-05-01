@@ -69,7 +69,7 @@
 		return true;													\
 	}																	\
 	PGSTROM_SQLTYPE_OPERATORS(NAME)
-	
+
 PGSTROM_SIMPLE_BASETYPE_TEMPLATE(bool, int8_t);
 PGSTROM_SIMPLE_BASETYPE_TEMPLATE(int1, int8_t);
 PGSTROM_SIMPLE_BASETYPE_TEMPLATE(int2, int16_t);

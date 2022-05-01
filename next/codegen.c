@@ -18,22 +18,25 @@ static MemoryContext	devinfo_memcxt = NULL;
 static dlist_head		devtype_info_slot[DEVTYPE_INFO_NSLOTS];
 static dlist_head		devfunc_info_slot[DEVFUNC_INFO_NSLOTS];
 
-
+#define TYPE_OPCODE(NAME,OID,EXTENSION)			\
+	static uint32_t devtype_##NAME##_hash(bool isnull, Datum value);
+#include "xpu_opcodes.h"
 
 #define TYPE_OPCODE(NAME,OID,EXTENSION)				\
-	{EXTENSION, #NAME, DEVKERN__ANY, devtype_##NAME##_hash },
+	{EXTENSION, #NAME, DEVKERN__ANY, devtype_##NAME##_hash, NULL },
 static struct {
 	const char	   *type_extension;
 	const char	   *type_name;
 	uint32_t		type_flags;
 	devtype_hashfunc_f type_hashfunc;
+	const char	   *type_alias;
 } devtype_catalog[] = {
 #include "xpu_opcodes.h"
-	{NULL, NULL, 0, NULL}
+	/* alias device data types */
+	{NULL, "varchar", DEVKERN__ANY, NULL, "text"},
+	{NULL, "cidr", DEVKERN__ANY, NULL, "inet"},
+	{NULL, NULL, 0, NULL, NULL}
 };
-
-
-
 
 static const char *
 get_extension_name_by_object(Oid class_id, Oid object_id)
@@ -43,6 +46,60 @@ get_extension_name_by_object(Oid class_id, Oid object_id)
 	if (OidIsValid(ext_oid))
 		return get_extension_name(ext_oid);
 	return NULL;
+}
+
+static devtype_info *
+pgstrom_devtype_lookup_by_name(const char *__type_name)
+{
+	char   *type_name = alloca(strlen(__type_name) + 1);
+	char   *type_extension = NULL;
+	Oid		type_oid = InvalidOid;
+
+	strcpy(type_name, __type_name);
+	type_extension = strchr(type_name, '@');
+	if (type_extension)
+	{
+		Relation	rel;
+		SysScanDesc	sdesc;
+		ScanKeyData	skey;
+		HeapTuple	tup;
+
+		*type_extension++ = '\0';
+		rel = table_open(TypeRelationId, AccessShareLock);
+		ScanKeyInit(&skey,
+					Anum_pg_type_typname,
+					BTEqualStrategyNumber, F_NAMEEQ,
+					CStringGetDatum(type_name));
+		sdesc = systable_beginscan(rel, TypeNameNspIndexId,
+								   true, NULL, 1, &skey);
+		while (HeapTupleIsValid(tup = systable_getnext(sdesc)))
+		{
+			Datum	datum;
+			bool	isnull;
+			const char *extname;
+
+			datum = heap_getattr(tup, Anum_pg_type_oid,
+								 RelationGetDescr(rel),
+								 &isnull);
+			extname = get_extension_name_by_object(TypeRelationId,
+												   DatumGetObjectId(datum));
+			if (extname && strcmp(extname, type_extension) == 0)
+			{
+				type_oid = DatumGetObjectId(datum);
+				break;
+			}
+		}
+	}
+	else
+	{
+		type_oid = GetSysCacheOid2(TYPENAMENSP,
+								   Anum_pg_type_oid,
+								   PointerGetDatum(type_name),
+								   ObjectIdGetDatum(PG_CATALOG_NAMESPACE));
+	}
+	if (!OidIsValid(type_oid))
+		elog(ERROR, "catalog lookup failed for type '%s'", type_name);
+	return pgstrom_devtype_lookup(type_oid);
 }
 
 static devtype_info *
@@ -66,6 +123,7 @@ build_basic_devtype_info(TypeCacheEntry *tcache, const char *ext_name)
 	{
 		const char	   *__ext_name = devtype_catalog[i].type_extension;
 		const char	   *__type_name = devtype_catalog[i].type_name;
+		const char	   *__type_alias = devtype_catalog[i].type_alias;
 		MemoryContext	oldcxt;
 
 		if (ext_name
@@ -87,8 +145,14 @@ build_basic_devtype_info(TypeCacheEntry *tcache, const char *ext_name)
 			/* type equality functions */
 			dtype->type_eqfunc = get_opcode(tcache->eq_opr);
 			dtype->type_cmpfunc = tcache->cmp_proc;
-
 			MemoryContextSwitchTo(oldcxt);
+			/* type alias, if any */
+			if (__type_alias)
+			{
+				dtype->type_alias = pgstrom_devtype_lookup_by_name(__type_alias);
+				if (!dtype->type_alias)
+					dtype->type_is_negative = true;
+			}
 			break;
 		}
 	}
@@ -228,6 +292,242 @@ found:
 }
 
 /*
+ * Built-in device type hash functions
+ */
+static uint32_t
+devtype_bool_hash(bool isnull, Datum value)
+{
+	bool	bval;
+
+	if (isnull)
+		return 0;
+	bval = DatumGetBool(value) ? true : false;
+	return hash_any((unsigned char *)&bval, sizeof(bool));
+}
+
+static inline uint32_t
+__devtype_simple_hash(bool isnull, Datum value, int sz)
+{
+	if (isnull)
+		return 0;
+	return hash_any((unsigned char *)&value, sz);
+}
+
+static uint32_t
+devtype_int1_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(int8_t));
+}
+
+static uint32_t
+devtype_int2_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(int16_t));
+}
+
+static uint32_t
+devtype_int4_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(int32_t));
+}
+
+static uint32_t
+devtype_int8_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(int64_t));
+}
+
+static uint32_t
+devtype_float2_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(float2_t));
+}
+
+static uint32_t
+devtype_float4_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(float4_t));
+}
+
+static uint32_t
+devtype_float8_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(float8_t));
+}
+
+static uint32_t
+devtype_numeric_hash(bool isnull, Datum value)
+{
+	uint32_t	len;
+
+	if (isnull)
+		return 0;
+	len = VARSIZE_ANY_EXHDR(value);
+	if (len >= sizeof(uint16_t))
+	{
+		NumericChoice  *nc = (NumericChoice *)VARDATA_ANY(value);
+		NumericDigit   *digits = NUMERIC_DIGITS(nc);
+		int				weight = NUMERIC_WEIGHT(nc) + 1;
+		int				i, ndigits = NUMERIC_NDIGITS(nc, len);
+		int128_t		value = 0;
+
+		for (i=0; i < ndigits; i++)
+		{
+			NumericDigit dig = digits[i];
+
+			value = value * PG_NBASE + dig;
+			if (value < 0)
+				elog(ERROR, "numeric value is out of range");
+		}
+		if (NUMERIC_SIGN(nc) == NUMERIC_NEG)
+			value = -value;
+		weight = PG_DEC_DIGITS * (ndigits - weight);
+		/* see, set_normalized_numeric */
+		if (value == 0)
+			weight = 0;
+		else
+		{
+			while (value % 10 == 0)
+			{
+				value /= 10;
+				weight--;
+			}
+		}
+		return (hash_any((unsigned char *)&weight, sizeof(int16_t)) ^
+				hash_any((unsigned char *)&value, sizeof(int128_t)));
+	}
+	elog(ERROR, "corrupted numeric header");
+}
+
+static uint32_t
+devtype_bytea_hash(bool isnull, Datum value)
+{
+	if (isnull)
+		return 0;
+	return hash_any((unsigned char *)VARDATA_ANY(value), VARSIZE_ANY_EXHDR(value));
+}
+
+static uint32_t
+devtype_text_hash(bool isnull, Datum value)
+{
+	if (isnull)
+		return 0;
+	return hash_any((unsigned char *)VARDATA_ANY(value), VARSIZE_ANY_EXHDR(value));
+}
+
+static uint32_t
+devtype_bpchar_hash(bool isnull, Datum value)
+{
+	if (!isnull)
+	{
+		char   *s = VARDATA_ANY(value);
+		int		sz = VARSIZE_ANY_EXHDR(value);
+
+		sz = bpchartruelen(s, sz);
+		return hash_any((unsigned char *)s, sz);
+	}
+	return 0;
+}
+
+static uint32_t
+devtype_date_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(DateADT));
+}
+
+static uint32_t
+devtype_time_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(TimeADT));
+}
+
+static uint32_t
+devtype_timetz_hash(bool isnull, Datum value)
+{
+	if (!isnull)
+	{
+		TimeTzADT  *tmtz = DatumGetTimeTzADTP(value);
+
+		return (hash_any((unsigned char *)&tmtz->time, sizeof(TimeADT)) ^
+				hash_any((unsigned char *)&tmtz->zone, sizeof(int32_t)));
+	}
+	return 0;
+}
+
+static uint32_t
+devtype_timestamp_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(Timestamp));
+}
+
+static uint32_t
+devtype_timestamptz_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(TimestampTz));
+}
+
+static uint32_t
+devtype_interval_hash(bool isnull, Datum value)
+{
+	if (!isnull)
+	{
+		Interval   *iv = DatumGetIntervalP(value);
+
+		return hash_any((unsigned char *)iv, sizeof(Interval));
+	}
+	return 0;
+}
+
+static uint32_t
+devtype_money_hash(bool isnull, Datum value)
+{
+	return __devtype_simple_hash(isnull, value, sizeof(int64_t));
+}
+
+static uint32_t
+devtype_uuid_hash(bool isnull, Datum value)
+{
+	if (!isnull)
+	{
+		pg_uuid_t  *uuid = DatumGetUUIDP(value);
+
+		return hash_any(uuid->data, UUID_LEN);
+	}
+	return 0;
+}
+
+static uint32_t
+devtype_macaddr_hash(bool isnull, Datum value)
+{
+	if (!isnull)
+	{
+		macaddr	   *maddr = DatumGetMacaddrP(value);
+
+		return hash_any((unsigned char *)maddr, sizeof(macaddr));
+	}
+	return 0;
+}
+
+static uint32_t
+devtype_inet_hash(bool isnull, Datum value)
+{
+	if (!isnull)
+	{
+		inet	   *in = DatumGetInetP(value);
+		int			sz;
+
+		if (in->inet_data.family == PGSQL_AF_INET)
+			sz = offsetof(inet_struct, ipaddr[4]);
+		else if (in->inet_data.family == PGSQL_AF_INET6)
+			sz = offsetof(inet_struct, ipaddr[16]);
+		else
+			elog(ERROR, "corrupted inet data");
+		return hash_any((unsigned char *)&in->inet_data, sz);
+	}
+	return 0;
+}
+
+/*
  * Built-in device functions/operators
  */
 #define FUNC_OPCODE(SQLNAME,FN_ARGS,FN_FLAGS,DEVNAME,EXTENSION)	\
@@ -236,11 +536,11 @@ static struct {
 	const char	   *func_name;
 	const char	   *func_args;
 	uint32_t		func_flags;
-	XpuOpCode		func_opcode;
+	FuncOpCode		func_opcode;
 	const char	   *func_extension;
 } devfunc_catalog[] = {
 #include "xpu_opcodes.h"
-	{NULL,NULL,0,XpuOpCode__Invalid,NULL}
+	{NULL,NULL,0,FuncOpCode__Invalid,NULL}
 };
 
 static devfunc_info *

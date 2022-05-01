@@ -136,4 +136,5 @@ NUMERIC_WEIGHT(NumericChoice *nc)
 	}
 	return weight;
 }
+
 #endif /* XPU_NUMERIC_H */

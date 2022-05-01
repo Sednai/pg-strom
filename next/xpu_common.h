@@ -1057,7 +1057,7 @@ typedef struct toast_compress_header
  *
  * ----------------------------------------------------------------
  */
-#define FUNC_OPCODE(a,b,c,NAME,d)	FuncCode__##NAME,
+#define FUNC_OPCODE(a,b,c,NAME,d)	FuncOpCode__##NAME,
 typedef enum {
 	FuncOpCode__Invalid = 0,
 #include "xpu_opcodes.h"
@@ -1188,9 +1188,9 @@ PGSTROM_SQLTYPE_SIMPLE_DECLARATION(money, int64_t);
 typedef struct
 {
 	uint8_t		data[UUID_LEN];
-} pgsql_uuid_t;
+} pg_uuid_t;
 #endif
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(uuid, pgsql_uuid_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(uuid, pg_uuid_t);
 
 #ifndef INET_H
 typedef struct

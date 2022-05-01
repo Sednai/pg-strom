@@ -61,6 +61,7 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
+#include "utils/uuid.h"
 #include <assert.h>
 #include <cuda.h>
 #include <limits.h>
@@ -116,7 +117,7 @@ typedef struct devtype_info
 {
 	dlist_node	chain;
 	uint32_t	hash;
-	XpuOpCode	type_code;
+	TypeOpCode	type_code;
 	Oid			type_oid;
 	uint32		type_flags;
 	int16		type_length;
@@ -129,6 +130,8 @@ typedef struct devtype_info
 	/* oid of type related functions */
 	Oid			type_eqfunc;
 	Oid			type_cmpfunc;
+	/* alias type, if any */
+	struct devtype_info *type_alias;
 	/* element type of array, if type is array */
 	struct devtype_info *type_element;
 	/* attribute of sub-fields, if type is composite */
