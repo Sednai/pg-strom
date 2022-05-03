@@ -269,7 +269,7 @@ sql_inet_datum_hash(kern_context *kcxt,
 					sql_datum_t *__arg)
 {
 	sql_inet_t *arg = (sql_inet_t *)__arg;
-	int		len;
+	int			len;
 
 	if (arg->isnull)
 		*p_hash = 0;
@@ -289,4 +289,3 @@ sql_inet_datum_hash(kern_context *kcxt,
 	return true;
 }
 PGSTROM_SQLTYPE_OPERATORS(inet);
-
