@@ -32,7 +32,7 @@ set_normalized_numeric(sql_numeric_t *result, int128_t value, int16_t weight)
 STATIC_FUNCTION(bool)
 sql_numeric_from_varlena(kern_context *kcxt,
 						 sql_numeric_t *result,
-						 const varlena *addr)
+						 varlena *addr)
 {
 	uint32_t		len;
 
@@ -144,10 +144,9 @@ sql_numeric_to_varlena(char *buffer, int16_t weight, int128_t value)
 STATIC_FUNCTION(bool)
 sql_numeric_datum_ref(kern_context *kcxt,
 					  sql_datum_t *__result,
-					  const void *addr)
+					  void *addr)
 {
-	return sql_numeric_from_varlena(kcxt, (sql_numeric_t *)__result,
-									(const varlena *)addr);
+	return sql_numeric_from_varlena(kcxt, (sql_numeric_t *)__result, (varlena *)addr);
 }
 
 STATIC_FUNCTION(bool)
@@ -158,7 +157,7 @@ arrow_numeric_datum_ref(kern_context *kcxt,
 						uint32_t rowidx)
 {
 	sql_numeric_t  *result = (sql_numeric_t *)__result;
-	const void	   *addr;
+	void   *addr;
 
 	addr = KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx,
 									  sizeof(int128_t));
@@ -170,7 +169,7 @@ arrow_numeric_datum_ref(kern_context *kcxt,
 		 * Note that Decimal::scale is equivalent to numeric::weight.
 		 * It is the number of digits after the decimal point.
 		 */
-		set_normalized_numeric(result, *((const int128_t *)addr),
+		set_normalized_numeric(result, *((int128_t *)addr),
 							   cmeta->attopts.decimal.scale);
 	}
 	result->ops = &sql_numeric_ops;
@@ -180,9 +179,9 @@ arrow_numeric_datum_ref(kern_context *kcxt,
 PUBLIC_FUNCTION(int)
 sql_numeric_datum_store(kern_context *kcxt,
 						char *buffer,
-						const sql_datum_t *__arg)
+						sql_datum_t *__arg)
 {
-	const sql_numeric_t *arg = (const sql_numeric_t *)__arg;
+	sql_numeric_t *arg = (sql_numeric_t *)__arg;
 
 	if (arg->isnull)
 		return 0;
@@ -192,9 +191,9 @@ sql_numeric_datum_store(kern_context *kcxt,
 PUBLIC_FUNCTION(bool)
 sql_numeric_datum_hash(kern_context *kcxt,
 					   uint32_t *p_hash,
-					   const sql_datum_t *__arg)
+					   sql_datum_t *__arg)
 {
-	const sql_numeric_t *arg = (const sql_numeric_t *)__arg;
+	sql_numeric_t *arg = (sql_numeric_t *)__arg;
 
 	if (arg->isnull)
 		*p_hash = 0;

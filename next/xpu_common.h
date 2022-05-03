@@ -846,7 +846,7 @@ KDS_ARROW_REF_SIMPLE_DATUM(kern_data_store *kds,
 INLINE_FUNCTION(void *)
 KDS_ARROW_REF_VARLENA_DATUM(kern_data_store *kds,
 							kern_colmeta *cmeta,
-							uint32_t index,
+							uint32_t rowidx,
 							uint32_t *p_length)
 {
 	uint8_t	   *nullmap;
@@ -858,19 +858,19 @@ KDS_ARROW_REF_VARLENA_DATUM(kern_data_store *kds,
 	if (cmeta->nullmap_offset)
 	{
 		nullmap = (uint8_t *)kds + __kds_unpack(cmeta->nullmap_offset);
-		if (att_isnull(index, nullmap))
+		if (att_isnull(rowidx, nullmap))
 			return NULL;
 	}
 	Assert(cmeta->values_offset > 0 &&
 		   cmeta->extra_offset > 0 &&
-		   sizeof(uint32_t) * (index+1) <= __kds_unpack(cmeta->values_length));
+		   sizeof(uint32_t) * (rowidx+1) <= __kds_unpack(cmeta->values_length));
 	offset = (uint32_t *)(kds + __kds_unpack(cmeta->values_length));
 	extra = (char *)kds + __kds_unpack(cmeta->extra_offset);
 
-	Assert(offset[index]   <= offset[index+1] &&
-		   offset[index+1] <= __kds_unpack(cmeta->extra_length));
-	*p_length = offset[index+1] - offset[index];
-	return (extra + offset[index]);	
+	Assert(offset[rowidx]   <= offset[rowidx+1] &&
+		   offset[rowidx+1] <= __kds_unpack(cmeta->extra_length));
+	*p_length = offset[rowidx+1] - offset[rowidx];
+	return (extra + offset[rowidx]);	
 }
 
 /*
@@ -1064,10 +1064,14 @@ typedef enum {
 	FuncOpCode__BuiltInMax,
 } FuncOpCode;
 
-typedef bool  (*sql_func_t)(kern_context *kcxt, ...);
+typedef bool  (*sql_function_t)(kern_context *kcxt, ...);
 
-typedef struct sql_function_catalog_t	sql_function_catalog_t;
+typedef struct {
+	FuncOpCode		func_opcode;
+	sql_function_t	func_dptr;
+} sql_function_catalog_entry;
 
+EXTERN_DATA sql_function_catalog_entry *builtin_sql_function_catalog;
 
 /* ----------------------------------------------------------------
  *
@@ -1098,7 +1102,7 @@ struct sql_datum_operators {
 	TypeOpCode	sql_type_code;
 	bool	  (*sql_datum_ref)(kern_context *kcxt,
 							   sql_datum_t *result,
-							   const void *addr);
+							   void *addr);
 	bool	  (*arrow_datum_ref)(kern_context *kcxt,
 								 sql_datum_t *result,
 								 kern_data_store *kds,
@@ -1106,10 +1110,10 @@ struct sql_datum_operators {
 								 uint32_t rowidx);
 	int		  (*sql_datum_store)(kern_context *kcxt,
 								 char *buffer,
-								 const sql_datum_t *arg);
+								 sql_datum_t *arg);
 	bool	  (*sql_datum_hash)(kern_context *kcxt,
 								uint32_t *p_hash,
-								const sql_datum_t *arg);
+								sql_datum_t *arg);
 };
 
 #define PGSTROM_SQLTYPE_SIMPLE_DECLARATION(NAME,BASETYPE)	\
@@ -1125,8 +1129,6 @@ struct sql_datum_operators {
 		char   *value;										\
 	} sql_##NAME##_t;										\
 	EXTERN_DATA sql_datum_operators sql_##NAME##_ops
-#define PGSTROM_SQLTYPE_ALIAS_DECLARATION(NAME,ALIAS)	\
-	typedef sql_##ALIAS##_t sql_##NAME##_t
 #define PGSTROM_SQLTYPE_OPERATORS(NAME)						\
 	PUBLIC_DATA sql_datum_operators sql_##NAME##_ops = {	\
 		.sql_type_name = #NAME,								\
@@ -1137,6 +1139,62 @@ struct sql_datum_operators {
 		.sql_datum_hash = sql_##NAME##_datum_hash,			\
 	}
 
+#define PGSTROM_SIMPLE_BASETYPE_TEMPLATE(NAME,BASETYPE)					\
+	STATIC_FUNCTION(bool)												\
+	sql_##NAME##_datum_ref(kern_context *kcxt,							\
+						   sql_datum_t *__result,						\
+						   void *addr)									\
+	{																	\
+		sql_##NAME##_t *result = (sql_##NAME##_t *)__result;			\
+																		\
+		memset(result, 0, sizeof(sql_##NAME##_t));						\
+		if (!addr)														\
+			result->isnull = true;										\
+		else															\
+			result->value = *((BASETYPE *)addr);						\
+		result->ops = &sql_##NAME##_ops;								\
+		return true;													\
+	}																	\
+	STATIC_FUNCTION(bool)												\
+	arrow_##NAME##_datum_ref(kern_context *kcxt,						\
+							 sql_datum_t *__result,						\
+							 kern_data_store *kds,						\
+							 kern_colmeta *cmeta,						\
+							 uint32_t rowidx)							\
+	{																	\
+		void	   *addr;												\
+																		\
+		addr = KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx,			\
+										  sizeof(BASETYPE));			\
+		return sql_##NAME##_datum_ref(kcxt, __result, addr);			\
+	}																	\
+	STATIC_FUNCTION(int)												\
+	sql_##NAME##_datum_store(kern_context *kcxt,						\
+							 char *buffer,								\
+							 sql_datum_t *__arg)						\
+	{																	\
+		sql_##NAME##_t *arg = (sql_##NAME##_t *)__arg;					\
+																		\
+		if (arg->isnull)												\
+			return 0;													\
+		*((BASETYPE *)buffer) = arg->value;								\
+		return sizeof(BASETYPE);										\
+	}																	\
+	STATIC_FUNCTION(bool)												\
+	sql_##NAME##_datum_hash(kern_context *kcxt,							\
+							uint32_t *p_hash,							\
+							sql_datum_t *__arg)							\
+	{																	\
+		sql_##NAME##_t *arg = (sql_##NAME##_t *)__arg;					\
+																		\
+		if (arg->isnull)												\
+			*p_hash = 0;												\
+		else															\
+			*p_hash = pg_hash_any(&arg->value, sizeof(BASETYPE));		\
+		return true;													\
+	}																	\
+	PGSTROM_SQLTYPE_OPERATORS(NAME)
+		
 PGSTROM_SQLTYPE_SIMPLE_DECLARATION(bool, int8_t);
 PGSTROM_SQLTYPE_SIMPLE_DECLARATION(int1, int8_t);
 PGSTROM_SQLTYPE_SIMPLE_DECLARATION(int2, int16_t);
@@ -1146,73 +1204,9 @@ PGSTROM_SQLTYPE_SIMPLE_DECLARATION(float2, float2_t);
 PGSTROM_SQLTYPE_SIMPLE_DECLARATION(float4, float4_t);
 PGSTROM_SQLTYPE_SIMPLE_DECLARATION(float8, float8_t);
 #include "xpu_numeric.h"
-PGSTROM_SQLTYPE_VARLENA_DECLARATION(bytea);
-PGSTROM_SQLTYPE_VARLENA_DECLARATION(text);
-PGSTROM_SQLTYPE_VARLENA_DECLARATION(bpchar);
-
-//#include "xpu_timelib.h"
-
-
-#ifndef DATE_H
-typedef int32_t		DateADT;
-typedef int64_t		TimeADT;
-typedef struct
-{
-	TimeADT		time;	/* all time units other than months and years */
-	int32_t		zone;	/* numeric time zone, in seconds */
-} TimeTzADT;
-#endif
-#ifndef DATATYPE_TIMESTAMP_H
-typedef int64_t		Timestamp;
-typedef int64_t		TimestampTz;
-typedef int64_t		TimeOffset;
-typedef int32_t		fsec_t;		/* fractional seconds (in microseconds) */
-typedef struct
-{
-	TimeOffset	time;	/* all time units other than days, months and years */
-	int32_t		day;	/* days, after time for alignment */
-	int32_t		month;	/* months and years, after time for alignment */
-} Interval;
-#endif
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(date, int32_t);
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(time, int64_t);
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(timetz, TimeTzADT);
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(timestamp, Timestamp);
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(timestamptz, TimestampTz);
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(interval, Interval);
-
-//#include "xpu_misclib.h"
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(money, int64_t);
-#ifndef UUID_H
-#define UUID_LEN		16
-typedef struct
-{
-	uint8_t		data[UUID_LEN];
-} pg_uuid_t;
-#endif
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(uuid, pg_uuid_t);
-
-#ifndef INET_H
-typedef struct
-{
-	uint8_t		a, b, c, d, e, f;
-} macaddr;
-
-typedef struct
-{
-	uint8_t		family;			/* PGSQL_AF_INET or PGSQL_AF_INET6 */
-	uint8_t		bits;			/* number of bits in netmask */
-	uint8_t		ipaddr[16];		/* up to 128 bits of address */
-} inet_struct;
-#endif
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(macaddr, macaddr);
-PGSTROM_SQLTYPE_SIMPLE_DECLARATION(inet, inet_struct);
-
-//#include "xpu_basetype.h"
-//#include "xpu_numeric.h"
-//#include "xpu_textlib.h"
-//#include "xpu_timelib.h"
-//#include "xpu_misclib.h"
+#include "xpu_textlib.h"
+#include "xpu_timelib.h"
+#include "xpu_misclib.h"
 
 /*
  * pg_array_t - array type support
@@ -1224,8 +1218,8 @@ PGSTROM_SQLTYPE_SIMPLE_DECLARATION(inet, inet_struct);
  * the columnar buffer by @smeta.
  */
 typedef struct {
+	SQL_DATUM_COMMON_FIELD;
 	char	   *value;
-	bool		isnull;
 	int			length;
 	uint32_t	start;
 	kern_colmeta *smeta;
@@ -1242,10 +1236,10 @@ PGSTROM_SQLTYPE_SIMPLE_DECLARATION(array, pg_array_t);
  * the values array on the KDS.
  */
 typedef struct {
-	char	   *value;
-	bool		isnull;
+	SQL_DATUM_COMMON_FIELD;
 	int16_t		nfields;
 	uint32_t	rowidx;
+	char	   *value;
 	Oid			comp_typid;
 	int			comp_typmod;
 	kern_colmeta *smeta;

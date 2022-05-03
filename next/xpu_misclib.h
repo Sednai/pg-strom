@@ -13,17 +13,21 @@
 #define XPU_MISCLIB_H
 #include <sys/socket.h>
 
-/* pg_uuid_t */
+#ifndef CASH_H
+typedef int64_t		Cash;
+#endif
+
 #ifndef UUID_H
-#define UUID_LEN		16
+/* sql_uuid_t */
+#define UUID_LEN	16
 typedef struct
 {
 	uint8_t		data[UUID_LEN];
-} pgsql_uuid_t;
+} pg_uuid_t;
 #endif	/* UUID_H */
 
-/* pg_macaddr_t */
 #ifndef INET_H
+/* sql_macaddr_t */
 typedef struct
 {
 	uint8_t		a;
@@ -34,7 +38,7 @@ typedef struct
 	uint8_t		f;
 } macaddr;
 
-/* pg_inet_t */
+/* sql_inet_t */
 typedef struct
 {
 	uint8_t		family;		/* PGSQL_AF_INET or PGSQL_AF_INET6 */
@@ -60,9 +64,9 @@ typedef struct
 	((inetptr)->family == PGSQL_AF_INET ? 32 : 128)
 #endif	/* INET_H */
 
-PGSTROM_SIMPLE_DEVTYPE_DECLARATION(money, int64_t)
-PGSTROM_SIMPLE_DEVTYPE_DECLARATION(uuid, pgsql_uuid_t)
-PGSTROM_SIMPLE_DEVTYPE_DECLARATION(macaddr, macaddr)
-PGSTROM_SIMPLE_DEVTYPE_DECLARATION(inet, inet_struct)
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(money, int64_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(uuid, pg_uuid_t);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(macaddr, macaddr);
+PGSTROM_SQLTYPE_SIMPLE_DECLARATION(inet, inet_struct);
 
 #endif	/* XPU_MISCLIB_H */

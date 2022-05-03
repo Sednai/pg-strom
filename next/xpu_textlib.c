@@ -12,19 +12,10 @@
  */
 #include "xpu_common.h"
 
-/* ----------------------------------------------------------------
- *
- * bytea functions and operators
- *
- * ----------------------------------------------------------------
- */
-PGSTROM_VARLENA_DEVTYPE_TEMPLATE(bytea)
-
-/* ----------------------------------------------------------------
- *
- * bpchar functions and operators
- *
- * ----------------------------------------------------------------
+PGSTROM_VARLENA_BASETYPE_TEMPLATE(bytea);
+PGSTROM_VARLENA_BASETYPE_TEMPLATE(text);
+/*
+ * bpchar type handlers
  */
 INLINE_FUNCTION(int)
 bpchar_truelen(const char *s, int len)
@@ -39,82 +30,72 @@ bpchar_truelen(const char *s, int len)
 	return i + 1;
 }
 
-PUBLIC_FUNCTION(bool)
+STATIC_FUNCTION(bool)
 sql_bpchar_datum_ref(kern_context *kcxt,
-					 sql_bpchar_t *result,
+					 sql_datum_t *__result,
 					 void *addr)
 {
-	memset(result, 0, sizeof(sql_bpchar_t));
-	if (addr)
-	{
-		result->isnull = false;
-		result->length = -1;
-		result->value = addr;
-		return VARSIZE_ANY(addr);
-	}
-	result->isnull = true;
-	return true;
-}
-
-PUBLIC_FUNCTION(bool)
-sql_bpchar_param_ref(kern_context *kcxt,
-					 sql_bpchar_t *result,
-					 uint32_t param_id)
-{
-	void   *addr = kparam_get_value(kcxt->kparams, param_id);
-
-	return sql_bpchar_datum_ref(kcxt, result, addr);
-}
-
-PUBLIC_FUNCTION(bool)
-arrow_bpchar_datum_ref(kern_context *kcxt,
-					   sql_bpchar_t *result,
-					   kern_data_store *kds,
-					   kern_colmeta *cmeta,
-					   uint32_t rowidx)
-{
-	int		unitsz = cmeta->atttypmod - VARHDRSZ;
-	char   *addr = NULL;
-
-	if (unitsz > 0)
-		addr = KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx, unitsz);
+	sql_bpchar_t *result = (sql_bpchar_t *)__result;
 	memset(result, 0, sizeof(sql_bpchar_t));
 	if (!addr)
 		result->isnull = true;
 	else
 	{
-		char   *pos = addr + unitsz;
-
-		while (pos > addr && pos[-1] == ' ')
-			pos--;
-		result->value = addr;
-		result->length = pos - addr;
+		result->length = -1;
+		result->value = (char *)addr;
 	}
+	result->ops = &sql_bpchar_ops;
 	return true;
 }
 
-PUBLIC_FUNCTION(int)
+STATIC_FUNCTION(bool)
+arrow_bpchar_datum_ref(kern_context *kcxt,
+					   sql_datum_t *__result,
+					   kern_data_store *kds,
+					   kern_colmeta *cmeta,
+					   uint32_t rowidx)
+{
+	sql_bpchar_t *result = (sql_bpchar_t *)__result;
+	int		unitsz = cmeta->attopts.fixed_size_binary.byteWidth;
+	char   *addr = NULL;
+
+	if (unitsz > 0)
+		addr = (char *)KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx, unitsz);
+	memset(result, 0, sizeof(sql_bpchar_t));
+	if (!addr)
+		result->isnull = true;
+	else
+	{
+		result->value = (char *)addr;
+		result->length = bpchar_truelen(addr, unitsz);
+	}
+	result->ops = &sql_bpchar_ops;
+	return true;
+}
+
+STATIC_FUNCTION(int)
 sql_bpchar_datum_store(kern_context *kcxt,
 					   char *buffer,
-					   sql_bpchar_t *datum) 
+					   sql_datum_t *__arg)
 {
+	sql_bpchar_t *arg = (sql_bpchar_t *)__arg;
 	char   *data;
 	int		len;
 
-	if (datum->isnull)
+	if (arg->isnull)
 		return 0;
-	if (datum->length < 0)
+	if (arg->length < 0)
 	{
-		data = VARDATA_ANY(datum->value);
-		len = VARSIZE_ANY_EXHDR(datum->value);
+		data = VARDATA_ANY(arg->value);
+		len = VARSIZE_ANY_EXHDR(arg->value);
 		if (!VARATT_IS_COMPRESSED(data) &&
 			!VARATT_IS_EXTERNAL(data))
 			len = bpchar_truelen(data, len);
 	}
 	else
 	{
-		data = datum->value;
-		len = bpchar_truelen(data, datum->length);
+		data = arg->value;
+		len = bpchar_truelen(data, arg->length);
 	}
 	if (buffer)
 	{
@@ -124,57 +105,39 @@ sql_bpchar_datum_store(kern_context *kcxt,
 	return len + VARHDRSZ;
 }
 
-bool
-sql_bpchar_hash(kern_context*kcxt,
-				uint32_t *p_hash,
-				sql_bpchar_t *datum)
+STATIC_FUNCTION(bool)
+sql_bpchar_datum_hash(kern_context*kcxt,
+					  uint32_t *p_hash,
+					  sql_datum_t *__arg)
 {
+	sql_bpchar_t *arg = (sql_bpchar_t *)__arg;
 	char   *data;
 	int		len;
 
-	if (datum->isnull)
-		return 0;
-	if (datum->length >= 0)
-	{
-		data = datum->value;
-        len = datum->length;
-	}
-	else if (!VARATT_IS_COMPRESSED(datum->value) &&
-			 !VARATT_IS_EXTERNAL(datum->value))
-	{
-		data = VARDATA_ANY(datum->value);
-		len = VARSIZE_ANY_EXHDR(datum->value);
-	}
+	if (arg->isnull)
+		*p_hash = 0;
 	else
 	{
-		STROM_CPU_FALLBACK(kcxt, ERRCODE_STROM_VARLENA_UNSUPPORTED,
-						   "bpchar datum is compressed or external");
-		return false;
+		if (arg->length >= 0)
+		{
+			data = arg->value;
+			len = arg->length;
+		}
+		else if (!VARATT_IS_COMPRESSED(arg->value) &&
+				 !VARATT_IS_EXTERNAL(arg->value))
+		{
+			data = VARDATA_ANY(arg->value);
+			len = VARSIZE_ANY_EXHDR(arg->value);
+		}
+		else
+		{
+			STROM_CPU_FALLBACK(kcxt, ERRCODE_STROM_VARLENA_UNSUPPORTED,
+							   "bpchar datum is compressed or external");
+			return false;
+		}
+		len = bpchar_truelen(data, len);
+		*p_hash = pg_hash_any(data, len);
 	}
-	len = bpchar_truelen(data, len);
-	*p_hash = pg_hash_any(data, len);
 	return true;
 }
-
-PUBLIC_FUNCTION(uint32_t)
-devtype_bpchar_hash(bool isnull, Datum value)
-{
-	sql_bpchar_t	temp;
-	uint32_t		hash;
-	void		   *addr;
-	DECL_KERNEL_CONTEXT(u,NULL,0);
-	addr = (isnull ? NULL : DatumGetPointer(value));
-	if (!sql_bpchar_datum_ref(&u.kcxt, &temp, addr) ||
-		!sql_bpchar_hash(&u.kcxt, &hash, &temp))
-		pg_kern_ereport(&u.kcxt);
-	return hash;
-}
-
-/* ----------------------------------------------------------------
- *
- * text functions and operators
- *
- * ----------------------------------------------------------------
- */
-PGSTROM_VARLENA_DEVTYPE_TEMPLATE(text)
-PGSTROM_ALIAS_DEVTYPE_TEMPLATE(varchar, text)
+PGSTROM_SQLTYPE_OPERATORS(bpchar);

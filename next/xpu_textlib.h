@@ -12,172 +12,94 @@
 #ifndef XPU_TEXTLIB_H
 #define XPU_TEXTLIB_H
 
-#ifdef __STROM_HOST__
-#define PGSTROM_VARLENA_DEVTYPE_HASH_TEMPLATE(NAME)				\
-	PUBLIC_FUNCTION(uint32_t)									\
-	devtype_##NAME##_hash(bool isnull, Datum value)				\
-	{															\
-	    sql_##NAME##_t	temp;									\
-		uint32_t		hash;									\
-		void		   *addr;									\
-		DECL_KERNEL_CONTEXT(u,NULL,0);							\
-		addr = (isnull ? NULL : DatumGetPointer(value));		\
-		if (!sql_##NAME##_datum_ref(&u.kcxt, &temp, addr) ||	\
-			!sql_##NAME##_hash(&u.kcxt, &hash, &temp))			\
-			pg_kern_ereport(&u.kcxt);							\
-		return hash;											\
-	}
-#define PGSTROM_ALIAS_DEVTYPE_HASH_TEMPLATE(NAME,ALIAS)			\
-	PUBLIC_FUNCTION(uint32_t)									\
-	devtype_##NAME##_hash(bool isnull, Datum value)				\
-	{															\
-		return devtype_##ALIAS##_hash(isnull, value);			\
-	}
-#else
-#define PGSTROM_VARLENA_DEVTYPE_HASH_TEMPLATE(NAME)
-#define PGSTROM_ALIAS_DEVTYPE_HASH_TEMPLATE(NAME,ALIAS)
-#endif	/* __STROM_HOST__ */
-
-#define PGSTROM_VARLENA_DEVTYPE_TEMPLATE(NAME)							\
-	PUBLIC_FUNCTION(bool)												\
+#define PGSTROM_VARLENA_BASETYPE_TEMPLATE(NAME)							\
+	STATIC_FUNCTION(bool)												\
 	sql_##NAME##_datum_ref(kern_context *kcxt,							\
-						   sql_##NAME##_t *result,						\
+						   sql_datum_t *__result,						\
 						   void *addr)									\
 	{																	\
+		sql_##NAME##_t *result = (sql_##NAME##_t *)__result;			\
+																		\
+		memset(result, 0, sizeof(sql_##NAME##_t));						\
 		if (!addr)														\
 			result->isnull = true;										\
 		else															\
-		{																\
-			result->isnull = false;										\
-			result->length = -1;										\
-			result->value = addr;										\
-		}																\
+			result->value = (char *)addr;								\
+		result->ops = &sql_##NAME##_ops;								\
 		return true;													\
 	}																	\
-	PUBLIC_FUNCTION(bool)												\
-	sql_##NAME##_param_ref(kern_context *kcxt,							\
-						   sql_##NAME##_t *result,						\
-						   uint32_t param_id)							\
-	{																	\
-		void   *addr = kparam_get_value(kcxt->kparams, param_id);		\
-																		\
-		return sql_##NAME##_datum_ref(kcxt, result, addr);				\
-	}																	\
-	PUBLIC_FUNCTION(bool)												\
+	STATIC_FUNCTION(bool)												\
 	arrow_##NAME##_datum_ref(kern_context *kcxt,						\
-							 sql_##NAME##_t *result,					\
+							 sql_datum_t *__result,						\
 							 kern_data_store *kds,						\
 							 kern_colmeta *cmeta,						\
 							 uint32_t rowidx)							\
 	{																	\
+		sql_##NAME##_t *result = (sql_##NAME##_t *)__result;			\
 		void	   *addr;												\
-		uint32_t	len;												\
+		uint32_t	length;												\
 																		\
-		addr = KDS_ARROW_REF_VARLENA_DATUM(kds, cmeta, rowidx, &len);	\
+		addr = KDS_ARROW_REF_VARLENA_DATUM(kds, cmeta, rowidx,			\
+										  &length);						\
+		memset(result, 0, sizeof(sql_##NAME##_t));						\
 		if (!addr)														\
 			result->isnull = true;										\
 		else															\
 		{																\
-			result->isnull = false;										\
-			result->length = len;										\
-			result->value  = addr;										\
+			result->length = length;									\
+			result->value = (char *)addr;								\
 		}																\
+		result->ops = &sql_##NAME##_ops;								\
 		return true;													\
 	}																	\
-	PUBLIC_FUNCTION(int)												\
+	STATIC_FUNCTION(int)												\
 	sql_##NAME##_datum_store(kern_context *kcxt,						\
 							 char *buffer,								\
-							 sql_##NAME##_t *datum)						\
+							 sql_datum_t *__arg)						\
 	{																	\
-		char   *data;													\
-		int		len;													\
+		sql_##NAME##_t *arg = (sql_##NAME##_t *)__arg;					\
+		char	   *data;												\
+		uint32_t	len;												\
 																		\
-		if (datum->isnull)												\
+		if (arg->isnull)												\
 			return 0;													\
-		if (datum->length < 0)											\
+		if (arg->length < 0)											\
 		{																\
-			data = VARDATA_ANY(datum->value);							\
-			len = VARSIZE_ANY_EXHDR(datum->value);						\
+			data = VARDATA_ANY(arg->value);								\
+			len = VARSIZE_ANY_EXHDR(arg->value);						\
 		}																\
 		else															\
 		{																\
-			data = datum->value;										\
-			len = datum->length;										\
+			data = arg->value;											\
+			len = arg->length;											\
 		}																\
 		if (buffer)														\
 		{																\
 			memcpy(buffer + VARHDRSZ, data, len);						\
-			SET_VARSIZE(buffer, len + VARHDRSZ);						\
+			SET_VARSIZE(buffer, VARHDRSZ + len);						\
 		}																\
-		 return len + VARHDRSZ;											\
+		return VARHDRSZ + len;											\
 	}																	\
-	bool																\
-	sql_##NAME##_hash(kern_context*kcxt,								\
-					  uint32_t *p_hash,									\
-					  sql_##NAME##_t*datum)								\
+	STATIC_FUNCTION(bool)												\
+	sql_##NAME##_datum_hash(kern_context *kcxt,							\
+							uint32_t *p_hash,							\
+							sql_datum_t *__arg)							\
 	{																	\
-		if (datum->isnull)												\
+		sql_##NAME##_t *arg = (sql_##NAME##_t *)__arg;					\
+																		\
+		if (arg->isnull)												\
 			*p_hash = 0;												\
-		else if (datum->length >= 0)									\
-			*p_hash = pg_hash_any(datum->value, datum->length);			\
-		else if (!VARATT_IS_COMPRESSED(datum->value) &&					\
-				 !VARATT_IS_EXTERNAL(datum->value))						\
-			*p_hash = pg_hash_any(VARDATA_ANY(datum->value),			\
-								  VARSIZE_ANY_EXHDR(datum->value));		\
+		else if (arg->length < 0)										\
+			*p_hash = pg_hash_any(VARDATA_ANY(arg->value),				\
+								  VARSIZE_ANY_EXHDR(arg->value));		\
 		else															\
-		{																\
-			STROM_CPU_FALLBACK(kcxt, ERRCODE_STROM_VARLENA_UNSUPPORTED,	\
-							   #NAME " datum is compressed or external"); \
-			return false;												\
-		}																\
+			*p_hash = pg_hash_any(arg->value, arg->length);				\
 		return true;													\
 	}																	\
-	PGSTROM_VARLENA_DEVTYPE_HASH_TEMPLATE(NAME)
+	PGSTROM_SQLTYPE_OPERATORS(NAME)
 
-#define PGSTROM_ALIAS_DEVTYPE_TEMPLATE(NAME,ALIAS)				\
-	PUBLIC_FUNCTION(bool)										\
-	sql_##NAME##_datum_ref(kern_context *kcxt,					\
-						   sql_##NAME##_t *result,				\
-						   void *addr)							\
-	{															\
-		return sql_##ALIAS##_datum_ref(kcxt,result,addr);		\
-	}															\
-	PUBLIC_FUNCTION(bool)										\
-	sql_##NAME##_param_ref(kern_context *kcxt,					\
-						   sql_##NAME##_t *result,				\
-						   uint32_t param_id)					\
-	{															\
-		return sql_##ALIAS##_param_ref(kcxt,result,param_id);	\
-	}															\
-	PUBLIC_FUNCTION(bool)										\
-	arrow_##NAME##_datum_ref(kern_context *kcxt,				\
-							 sql_##NAME##_t *result,			\
-							 kern_data_store *kds,				\
-							 kern_colmeta *cmeta,				\
-							 uint32_t rowidx)					\
-	{															\
-		return arrow_##ALIAS##_datum_ref(kcxt,result,			\
-										 kds,cmeta,rowidx);		\
-	}															\
-	PUBLIC_FUNCTION(int)										\
-	sql_##NAME##_datum_store(kern_context *kcxt,				\
-							 char *buffer,						\
-							 sql_##NAME##_t *datum)				\
-	{															\
-		return sql_##ALIAS##_datum_store(kcxt,buffer,datum);	\
-	}															\
-	PUBLIC_FUNCTION(bool)										\
-	sql_##NAME##_hash(kern_context*kcxt,						\
-					  uint32_t *p_hash,							\
-					  sql_##NAME##_t*datum)						\
-	{															\
-		return sql_##ALIAS##_hash(kcxt, p_hash, datum);			\
-	}															\
-	PGSTROM_ALIAS_DEVTYPE_HASH_TEMPLATE(NAME,ALIAS)
-
-PGSTROM_VARLENA_DEVTYPE_DECLARATION(bytea)
-PGSTROM_VARLENA_DEVTYPE_DECLARATION(bpchar)
-PGSTROM_VARLENA_DEVTYPE_DECLARATION(text)
-	PGSTROM_ALIAS_DEVTYPE_DECLARATION(varchar, text)
+PGSTROM_SQLTYPE_VARLENA_DECLARATION(bytea);
+PGSTROM_SQLTYPE_VARLENA_DECLARATION(text);
+PGSTROM_SQLTYPE_VARLENA_DECLARATION(bpchar);
 
 #endif  /* XPU_TEXTLIB_H */

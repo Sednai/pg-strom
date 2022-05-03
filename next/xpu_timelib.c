@@ -1,5 +1,5 @@
 /*
- * xpu_basetype.c
+ * xpu_timelib.c
  *
  * Collection of the primitive Date/Time type support on xPU(GPU/DPU/SPU)
  * ----
@@ -34,126 +34,103 @@
 
 #define DT_NOBEGIN			(-0x7fffffffffffffffL - 1)
 #define DT_NOEND			(0x7fffffffffffffffL)
-#endif /* DATATYPE_TIMESTAMP_H */
+#endif	/* DATATYPE_TIMESTAMP_H */
 
 /*
  * Common ref/store functions for:
  *  date/time/timetz/timestamp/timestamptz/interval
  */
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(date, DateADT)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(time, TimeADT)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(timetz, TimeTzADT)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(timestamp, Timestamp)
-PGSTROM_SIMPLE_DEVTYPE_TEMPLATE(timestamptz, TimestampTz)
 
-PUBLIC_FUNCTION(bool)
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(date, DateADT);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(time, TimeADT);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(timetz, TimeTzADT);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(timestamp, Timestamp);
+PGSTROM_SIMPLE_BASETYPE_TEMPLATE(timestamptz, TimestampTz);
+
+STATIC_FUNCTION(bool)
 sql_interval_datum_ref(kern_context *kcxt,
-					   sql_interval_t *result,
+					   sql_datum_t *__result,
 					   void *addr)
 {
+	sql_interval_t *result = (sql_interval_t *)__result;
+
+	memset(result, 0, sizeof(sql_interval_t));
 	if (!addr)
 		result->isnull = true;
 	else
-	{
-		result->isnull = false;
 		memcpy(&result->value, addr, sizeof(Interval));
-	}
+	result->ops = &sql_interval_ops;
 	return true;
 }
 
-PUBLIC_FUNCTION(bool)
-sql_interval_param_ref(kern_context *kcxt,
-					   sql_interval_t *result,
-					   uint32_t param_id)
-{
-	void   *addr = kparam_get_value(kcxt->kparams, param_id);
-
-	return sql_interval_datum_ref(kcxt, result, addr);
-}
-
-PUBLIC_FUNCTION(bool)
+STATIC_FUNCTION(bool)
 arrow_interval_datum_ref(kern_context *kcxt,
-						 sql_interval_t *result,
+						 sql_datum_t *__result,
 						 kern_data_store *kds,
 						 kern_colmeta *cmeta,
 						 uint32_t rowidx)
 {
+	sql_interval_t *result = (sql_interval_t *)__result;
 	uint32_t   *ival;
 
+	memset(result, 0, sizeof(sql_interval_t));
 	switch (cmeta->attopts.interval.unit)
 	{
 		case ArrowIntervalUnit__Year_Month:
 			ival = (uint32_t *)
 				KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx,
 										   sizeof(uint32_t));
-			memset(result, 0, sizeof(sql_interval_t));
-			result->value.month = *ival;
+			if (!ival)
+				result->isnull = true;
+			else
+				result->value.month = *ival;
 			break;
 		case ArrowIntervalUnit__Day_Time:
 			ival = (uint32_t *)
 				KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta, rowidx,
 										   2 * sizeof(uint32_t));
-			memset(result, 0, sizeof(sql_interval_t));
-			result->value.day = ival[0];
-			result->value.time = ival[1];
+			if (!ival)
+				result->isnull = true;
+			else
+			{
+				result->value.day = ival[0];
+				result->value.time = ival[1];
+			}
 			break;
 		default:
 			STROM_EREPORT(kcxt, ERRCODE_DATA_CORRUPTED,
 						  "unknown unit-size of Arrow::Interval");
 			return false;
 	}
+	result->ops = &sql_interval_ops;
 	return true;
 }
 
-PUBLIC_FUNCTION(int)
+STATIC_FUNCTION(int)
 sql_interval_datum_store(kern_context *kcxt,
 						 char *buffer,
-						 sql_interval_t *datum)
+						 sql_datum_t *__arg)
 {
-	if (datum->isnull)
+	sql_interval_t *arg = (sql_interval_t *)__arg;
+
+	if (arg->isnull)
 		return 0;
 	if (buffer)
-		memcpy(buffer, &datum->value, sizeof(Interval));
+		memcpy(buffer, &arg->value, sizeof(Interval));
 	return sizeof(Interval);
 }
 
-INLINE_FUNCTION(int128_t)
-__interval_cmp_value(sql_interval_t *datum)
+STATIC_FUNCTION(bool)
+sql_interval_datum_hash(kern_context *kcxt,
+						uint32_t *p_hash,
+						sql_datum_t *__arg)
 {
-	int64_t		days, frac;
+	sql_interval_t *arg = (sql_interval_t *)__arg;
 
-	frac = datum->value.time % USECS_PER_DAY;
-	days = (datum->value.time / USECS_PER_DAY +
-			datum->value.day +
-			datum->value.month * 30L);
-	return (int128_t)days * USECS_PER_DAY + (int128_t)frac;
-}
-
-PUBLIC_FUNCTION(bool)
-sql_interval_hash(kern_context *kcxt,
-				  uint32_t *p_hash,
-				  sql_interval_t *datum)
-{
-	if (datum->isnull)
+	if (arg->isnull)
 		*p_hash = 0;
 	else
-	{
-		int128_t	ival = __interval_cmp_value(datum);
-
-		*p_hash = pg_hash_any(&ival, sizeof(int128_t));
-	}
+		*p_hash = pg_hash_any(&arg->value, sizeof(Interval));
 	return true;
 }
-
-PUBLIC_FUNCTION(uint32_t)
-devtype_interval_hash(bool isnull, Datum value)
-{
-	sql_interval_t temp;
-	uint32_t	hash;
-	DECL_KERNEL_CONTEXT(u,NULL,0);
-	if (!sql_interval_datum_ref(&u.kcxt, &temp,
-								isnull ? NULL : DatumGetPointer(value)) ||
-        !sql_interval_hash(&u.kcxt, &hash, &temp))
-		pg_kern_ereport(&u.kcxt);
-	return hash;
-}
+PGSTROM_SQLTYPE_OPERATORS(interval);
