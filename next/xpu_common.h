@@ -1053,29 +1053,7 @@ typedef struct toast_compress_header
 
 /* ----------------------------------------------------------------
  *
- * Definition of device functions
- *
- * ----------------------------------------------------------------
- */
-#define FUNC_OPCODE(a,b,c,NAME,d)	FuncOpCode__##NAME,
-typedef enum {
-	FuncOpCode__Invalid = 0,
-#include "xpu_opcodes.h"
-	FuncOpCode__BuiltInMax,
-} FuncOpCode;
-
-typedef bool  (*sql_function_t)(kern_context *kcxt, ...);
-
-typedef struct {
-	FuncOpCode		func_opcode;
-	sql_function_t	func_dptr;
-} sql_function_catalog_entry;
-
-EXTERN_DATA sql_function_catalog_entry *builtin_sql_function_catalog;
-
-/* ----------------------------------------------------------------
- *
- * Definitions for device data types
+ * Definitions for XPU device data types
  *
  * ----------------------------------------------------------------
  */
@@ -1100,6 +1078,7 @@ struct sql_datum_t {
 struct sql_datum_operators {
 	const char *sql_type_name;
 	TypeOpCode	sql_type_code;
+	int			sql_type_sizeof;	/* =sizeof(sql_XXXX_t), not PG type! */
 	bool	  (*sql_datum_ref)(kern_context *kcxt,
 							   sql_datum_t *result,
 							   void *addr);
@@ -1133,6 +1112,7 @@ struct sql_datum_operators {
 	PUBLIC_DATA sql_datum_operators sql_##NAME##_ops = {	\
 		.sql_type_name = #NAME,								\
 		.sql_type_code = TypeOpCode__##NAME,				\
+		.sql_type_sizeof = sizeof(sql_##NAME##_t),			\
 		.sql_datum_ref = sql_##NAME##_datum_ref,			\
 		.arrow_datum_ref = arrow_##NAME##_datum_ref,		\
 		.sql_datum_store = sql_##NAME##_datum_store,		\
@@ -1182,6 +1162,112 @@ typedef struct {
 	kern_colmeta *smeta;
 } pg_composite_t;
 PGSTROM_SQLTYPE_SIMPLE_DECLARATION(composite, pg_composite_t);
+
+typedef struct {
+	TypeOpCode		type_opcode;
+	sql_datum_operators *type_ops;
+} sql_type_catalog_entry;
+
+EXTERN_DATA sql_type_catalog_entry	builtin_sql_types_catalog[];
+
+/* ----------------------------------------------------------------
+ *
+ * Definition of device functions
+ *
+ * ----------------------------------------------------------------
+ */
+#define FUNC_OPCODE(a,b,c,NAME,d)	FuncOpCode__##NAME,
+typedef enum {
+	FuncOpCode__Invalid = 0,
+	FuncOpCode__ConstExpr,
+	FuncOpCode__ParamExpr,
+	FuncOpCode__VarExpr,
+	FuncOpCode__BoolExpr_And,
+	FuncOpCode__BoolExpr_Or,
+	FuncOpCode__BoolExpr_Not,
+	FuncOpCode__NullTestExpr_IsNull,
+	FuncOpCode__NullTestExpr_IsNotNull,
+	FuncOpCode__BoolTestExpr_IsTrue,
+	FuncOpCode__BoolTestExpr_IsNotTrue,
+	FuncOpCode__BoolTestExpr_IsFalse,
+	FuncOpCode__BoolTestExpr_IsNotFalse,
+	FuncOpCode__BoolTestExpr_IsUnknown,
+	FuncOpCode__BoolTestExpr_IsNotUnknown,
+#include "xpu_opcodes.h"
+	FuncOpCode__BuiltInMax,
+} FuncOpCode;
+
+typedef struct kern_expression	kern_expression;
+#define XPU_PGFUNCTION_ARGS		kern_context *kcxt,			\
+								const kern_expression *expr,\
+								sql_datum_t *__result
+typedef bool  (*sql_function_t)(XPU_PGFUNCTION_ARGS);
+
+struct kern_expression
+{
+	uint32_t		_vl_len;
+	FuncOpCode		opcode;
+	sql_function_t	fn_dptr;		/* to be set by xPU service */
+	int				nargs;
+	TypeOpCode		rettype;
+	const sql_datum_operators *rettype_ops;	/* to be set by xPU service */
+	char			data[1]			__attribute__((aligned(MAXIMUM_ALIGNOF)));
+};
+#define EXEC_KERN_EXPRESSION(__kcxt,__expr,__retval)	\
+	(__expr)->fn_dptr((__kcxt),(__expr),(sql_datum_t *)__retval)
+#define EXPR_OVERRUN_CHECKS(__arg)				\
+	assert((char *)(__arg) + VARSIZE(__arg) <= (char *)expr + VARSIZE(expr))
+
+typedef struct
+{
+	uint32_t		_vl_len;
+	FuncOpCode		opcode;
+	sql_function_t	fn_dptr;		/* to be set by xPU service */
+	int				nargs;			/* = 0 */
+	TypeOpCode		rettype;
+	const sql_datum_operators *rettype_ops;	/* to be set by xPU service */
+	/* common field */
+	bool			const_isnull;
+	char			const_datum[1]	__attribute__((aligned(MAXIMUM_ALIGNOF)));
+} kern_const_expression;
+
+typedef struct
+{
+	uint32_t		_vl_len;
+	FuncOpCode		opcode;
+	sql_function_t	fn_dptr;		/* to be set by xPU service */
+	int				nargs;			/* = 0 */
+	TypeOpCode		rettype;
+	const sql_datum_operators *rettype_ops;	/* to be set by xPU service */
+	/* common field */
+	uint32_t		param_id;
+} kern_param_expression;
+
+typedef struct
+{
+	uint32_t		_vl_len;
+	FuncOpCode		opcode;
+	sql_function_t	fn_dptr;		/* to be set by xPU service */
+	int				nargs;			/* = 0 */
+	TypeOpCode		rettype;
+	const sql_datum_operators *rettype_ops;	/* to be set by xPU service */
+	/* common field */
+	int16_t			var_depth;
+	int16_t			var_attno;
+} kern_var_expression;
+
+
+
+
+
+
+
+typedef struct {
+	FuncOpCode		func_opcode;
+	sql_function_t	func_dptr;
+} sql_function_catalog_entry;
+
+EXTERN_DATA sql_function_catalog_entry	builtin_sql_functions_catalog[];
 
 /* ----------------------------------------------------------------
  *
