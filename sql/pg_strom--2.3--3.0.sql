@@ -22,10 +22,12 @@ CREATE OR REPLACE FUNCTION pgstrom.gstore_fdw_post_creation()
   RETURNS event_trigger
   AS 'MODULE_PATHNAME','pgstrom_gstore_fdw_post_creation'
   LANGUAGE C STRICT;
-CREATE EVENT TRIGGER pgstrom_gstore_fdw_post_creation
-  ON ddl_command_end
-WHEN tag IN ('CREATE FOREIGN TABLE')
-EXECUTE PROCEDURE pgstrom.gstore_fdw_post_creation();
+
+
+--CREATE EVENT TRIGGER pgstrom_gstore_fdw_post_creation
+--  ON ddl_command_end
+--WHEN tag IN ('CREATE FOREIGN TABLE')
+--EXECUTE PROCEDURE pgstrom.gstore_fdw_post_creation();
 
 CREATE FUNCTION public.gstore_fdw_apply_redo(regclass)
   RETURNS int

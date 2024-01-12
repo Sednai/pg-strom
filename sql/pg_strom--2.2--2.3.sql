@@ -9,11 +9,13 @@ CREATE OR REPLACE FUNCTION pgstrom.arrow_fdw_precheck_schema()
   AS 'MODULE_PATHNAME','pgstrom_arrow_fdw_precheck_schema'
   LANGUAGE C STRICT;
 
+/*
 CREATE EVENT TRIGGER pgstrom_arrow_fdw_precheck_schema
-    ON ddl_command_end
+   ON ddl_command_end
   WHEN tag IN ('CREATE FOREIGN TABLE',
                'ALTER FOREIGN TABLE')
 EXECUTE PROCEDURE pgstrom.arrow_fdw_precheck_schema();
+*/
 
 CREATE OR REPLACE FUNCTION pgstrom.arrow_fdw_truncate(regclass)
   RETURNS void
@@ -47,6 +49,7 @@ pgstrom.arrow_fdw_put_gpu_buffer(text)
 --
 -- Drop Gstore_Fdw support functions (deprecated)
 --
+/*
 DROP VIEW IF EXISTS pgstrom.gstore_fdw_chunk_info CASCADE;
 DROP FUNCTION IF EXISTS pgstrom.gstore_fdw_chunk_info() CASCADE;
 DROP TYPE IF EXISTS pgstrom.__gstore_fdw_chunk_info CASCADE;
@@ -203,3 +206,4 @@ DROP FUNCTION IF EXISTS pg_catalog.int8_as_float8(int8) CASCADE;
 --
 DROP FUNCTION IF EXISTS public.lo_import_gpu(int, bytea, bigint, bigint, oid) CASCADE;
 DROP FUNCTION IF EXISTS public.lo_export_gpu(oid, int, bytea, bigint, bigint) CASCADE;
+*/

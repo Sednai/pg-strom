@@ -494,7 +494,18 @@ pgstrom_post_planner(Query *parse,
 		if (planner_hook_next)
 			pstmt = planner_hook_next(parse, cursorOptions, boundParams);
 		else
+#ifndef XZ
 			pstmt = standard_planner(parse, cursorOptions, boundParams);
+#else
+			{
+				if (IS_PGXC_LOCAL_COORDINATOR) {
+					pstmt = pgxc_planner(parse, cursorOptions, boundParams);
+				} else {
+					pstmt = standard_planner(parse, cursorOptions, boundParams);
+				}
+			}
+#endif
+		
 	}
 	PG_CATCH();
 	{

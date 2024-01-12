@@ -47,6 +47,9 @@
 #endif  /* __PGSTROM_MODULE__ */
 #endif  /* WORDS_BIGENDIAN */
 
+#ifdef XZ
+#define int128 __int128
+#endif
 /* ----------------------------------------------------------------
  *
  * Put value handler for each data types
@@ -1366,8 +1369,11 @@ assignArrowTypeDictionary(SQLfield *column, ArrowField *arrow_field)
 	}
 
 	initArrowNode(&column->arrow_type, Utf8);
+	#ifdef XZ
+	#else
 	column->arrow_typename	= psprintf("Enum; dictionary=%u",
 									   column->sql_type.pgsql.typeid);
+	#endif
 	column->put_value		= put_dictionary_value;
 
 	return 2;	/* nullmap + values */

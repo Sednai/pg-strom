@@ -93,7 +93,7 @@ PG2ARROW_SOURCE = $(STROM_BUILD_ROOT)/utils/sql2arrow.c \
 PG2ARROW_DEPEND = $(PG2ARROW_SOURCE) \
                   $(STROM_BUILD_ROOT)/src/arrow_defs.h \
                   $(STROM_BUILD_ROOT)/src/arrow_ipc.h
-PG2ARROW_CFLAGS = -D__PG2ARROW__=1 -D_GNU_SOURCE -g -Wall \
+PG2ARROW_CFLAGS = -D__PG2ARROW__=1 -D_GNU_SOURCE -g -Wall -DXZ \
                   -I $(STROM_BUILD_ROOT)/src \
                   -I $(STROM_BUILD_ROOT)/utils \
                   -I $(shell $(PG_CONFIG) --includedir) \
@@ -197,7 +197,7 @@ CUDA_VERSION := $(shell grep -E '^\#define[ ]+CUDA_VERSION[ ]+[0-9]+$$' $(IPATH)
 #
 #       PGSTROM_FLAGS_CUSTOM := -g -O0 -Werror
 #
-PGSTROM_FLAGS += $(PGSTROM_FLAGS_CUSTOM)
+PGSTROM_FLAGS += $(PGSTROM_FLAGS_CUSTOM) -DPGXC -DXCP -DXZ
 PGSTROM_FLAGS += -D__PGSTROM_MODULE__=1
 ifdef PGSTROM_VERSION
 PGSTROM_FLAGS += "-DPGSTROM_VERSION=\"$(PGSTROM_VERSION)\""
@@ -207,9 +207,14 @@ ifeq ($(PGSTROM_DEBUG),1)
 PGSTROM_FLAGS += -g -O0
 endif
 # support of NVIDIA GPUDirect Storage (BETA)
-WITH_CUFILE := $(shell test -e $(LPATH)/cufile.h && echo 1 || echo 0)
+# WITH_CUFILE := $(shell test -e $(LPATH)/cufile.h && echo 1 || echo 0)
+# XZ:
+ WITH_CUFILE := $(shell test -e $(IPATH)/cufile.h && echo 1 || echo 0)
+
 ifeq ($(WITH_CUFILE),1)
-PGSTROM_FLAGS += -DWITH_CUFILE=1 -I $(LPATH)
+# PGSTROM_FLAGS += -DWITH_CUFILE=1 -I $(LPATH)
+# XZ:
+PGSTROM_FLAGS += -DWITH_CUFILE=1 -I $(IPATH)
 endif
 PGSTROM_FLAGS += -DCPU_ARCH=\"$(shell uname -m)\"
 PGSTROM_FLAGS += -DPGSHAREDIR=\"$(shell $(PG_CONFIG) --sharedir)\"
@@ -223,7 +228,7 @@ PG_CPPFLAGS := $(PGSTROM_FLAGS) -I $(IPATH)
 SHLIB_LINK := -L $(LPATH) -lcuda -lpmem
 
 # also, flags to build GPU libraries
-NVCC_FLAGS := $(NVCC_FLAGS_CUSTOM)
+NVCC_FLAGS := $(NVCC_FLAGS_CUSTOM) -DPGXC -DXCP -DXZ
 NVCC_FLAGS += -I $(shell $(PG_CONFIG) --includedir-server) \
               --fatbin \
               --maxrregcount=$(MAXREGCOUNT) \
@@ -240,7 +245,9 @@ else ifeq ($(shell test $(CUDA_VERSION) -ge 9000; echo $$?), 0)
 else
   NVCC_FLAGS += --gpu-code=sm_60,sm_61
 endif
-NVCC_DEBUG_FLAGS := $(NVCC_FLAGS) --source-in-ptx --device-debug
+NVCC_DEBUG_FLAGS := $(NVCC_FLAGS) 
+#--source-in-ptx 
+#--device-debug
 
 #
 # Definition of PG-Strom Extension

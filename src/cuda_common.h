@@ -581,6 +581,8 @@ typedef struct HeapTupleFields
 {
 	cl_uint			t_xmin;		/* inserting xact ID */
 	cl_uint			t_xmax;		/* deleting or locking xact ID */
+	cl_long			t_xmax_timestamp; // XZ
+	cl_long			t_xmin_timestamp; // XZ	
 	union
 	{
 		cl_uint		t_cid;		/* inserting or deleting command ID, or both */
@@ -605,6 +607,7 @@ typedef struct {
 
 	cl_ushort		t_infomask2;	/* number of attributes + various flags */
 	cl_ushort		t_infomask;		/* various flag bits, see below */
+	cl_short 		t_shardid;      // XZ
 	cl_uchar		t_hoff;			/* sizeof header incl. bitmap, padding */
 	/* ^ - 23 bytes - ^ */
 	cl_uchar		t_bits[1];		/* bitmap of NULLs -- VARIABLE LENGTH */
@@ -633,7 +636,8 @@ typedef struct {
 										 * modified, or tuple deleted */
 #define HEAP_HOT_UPDATED		0x4000	/* tuple was HOT-updated */
 #define HEAP_ONLY_TUPLE			0x8000	/* this is heap-only tuple */
-#define HEAP2_XACT_MASK			0xE000	/* visibility-related bits */
+//#define HEAP2_XACT_MASK			0xE000	/* visibility-related bits */
+#define HEAP2_XACT_MASK			0xF800 	// XZ
 
 /*
  * Index tuple header structure
@@ -752,10 +756,13 @@ typedef struct PageHeaderData
 #endif
 	cl_ushort		pd_checksum;	/* checksum */
 	cl_ushort		pd_flags;		/* flag bits, see below */
+	cl_short		pd_shardid; // XZ
 	LocationIndex	pd_lower;		/* offset to start of free space */
 	LocationIndex	pd_upper;		/* offset to end of free space */
 	LocationIndex	pd_special;		/* offset to start of special space */
 	cl_ushort		pd_pagesize_version;
+	cl_short		pd_algorithm_id; // XZ
+	cl_long			pd_prune_ts; // XZ
 	TransactionId pd_prune_xid;		/* oldest prunable XID, or zero if none */
 	ItemIdData		pd_linp[FLEXIBLE_ARRAY_MEMBER]; /* line pointer array */
 } PageHeaderData;
@@ -766,7 +773,8 @@ typedef struct PageHeaderData
 #define PD_PAGE_FULL		0x0002	/* not enough free space for new tuple? */
 #define PD_ALL_VISIBLE		0x0004	/* all tuples on page are visible to
 									 * everyone */
-#define PD_VALID_FLAG_BITS  0x0007	/* OR of all valid pd_flags bits */
+//#define PD_VALID_FLAG_BITS  0x0007	/* OR of all valid pd_flags bits */
+#define PD_VALID_FLAG_BITS  0x000F // XZ
 
 #define PageGetItemId(page, offsetNumber)				\
 	(&((PageHeaderData *)(page))->pd_linp[(offsetNumber) - 1])

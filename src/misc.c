@@ -476,6 +476,12 @@ pathnode_tree_walker(Path *node,
 			if (walker(((LimitPath *)node)->subpath, context))
 				return true;
 			break;
+#ifdef XZ
+		case T_RemoteSubPath:
+			if (walker(((RemoteSubPath *)node)->subpath,context))
+				return true;
+			break;
+#endif
 		default:
 			elog(ERROR, "unrecognized path-node type: %d",
 				 (int) nodeTag(node));

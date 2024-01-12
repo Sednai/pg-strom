@@ -211,6 +211,10 @@
 #include "nvme_strom.h"
 #include "arrow_defs.h"
 
+#ifdef XZ
+#include "pgxc/pgxc.h"
+#endif
+
 /*
  * --------------------------------------------------------------------
  *
@@ -283,6 +287,10 @@ typedef struct GpuContext
 /* Identifier of the Gpu Programs */
 typedef cl_long					ProgramId;
 #define INVALID_PROGRAM_ID		(-1L)
+
+#ifdef XZ
+#undef PAGE_SIZE
+#endif
 
 /*
  * GpuTask and related
@@ -840,12 +848,12 @@ CHECK_FOR_GPUCONTEXT(GpuContext *gcontext)
 			error_level = pg_atomic_read_u32(&gcontext->error_level);
 		}
 		ereport(error_level / 2,
-				errcode(gcontext->error_code),
+				(errcode(gcontext->error_code),
 				errmsg("%s", gcontext->error_message),
 				errdetail("GPU kernel location: %s:%d [%s]",
 						  gcontext->error_filename,
 						  gcontext->error_lineno,
-						  gcontext->error_funcname));
+						  gcontext->error_funcname)));
 	}
 	CHECK_FOR_INTERRUPTS();
 }

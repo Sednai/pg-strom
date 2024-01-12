@@ -2562,6 +2562,14 @@ try_add_gpujoin_paths(PlannerInfo *root,
 			return;
 	}
 
+#ifdef XZ
+	elog(NOTICE,"[DEBUG](try_add_gpujoin_paths) -> outer+inner paths");
+	
+	outer_path = create_remotesubplan_path(root, outer_path, NULL);
+	inner_path = create_remotesubplan_path(root, inner_path, NULL);
+	
+#endif
+
 	/*
 	 * setup inner_path_item
 	 */

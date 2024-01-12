@@ -19,6 +19,10 @@
 #include "cuda_gpuscan.h"
 #include "cuda_gpujoin.h"
 #include "cuda_gpupreagg.h"
+#ifdef XZ
+#include "optimizer/planner.h"
+#include "nodes/nodes.h"
+#endif
 
 static create_upper_paths_hook_type create_upper_paths_next;
 static CustomPathMethods	gpupreagg_path_methods;
@@ -29,6 +33,9 @@ static bool					enable_pullup_outer_join;		/* GUC */
 static bool					enable_partitionwise_gpupreagg;	/* GUC */
 static bool					enable_numeric_aggfuncs; 		/* GUC */
 static double				gpupreagg_reduction_threshold;	/* GUC */
+#ifdef XZ
+bool distribute_remote = false;
+#endif
 
 typedef struct
 {
@@ -1208,6 +1215,44 @@ make_gpupreagg_path(PlannerInfo *root,
 									   pfunc_bitmap);
 	cpath->methods = &gpupreagg_path_methods;
 
+#ifdef XZ
+	cpath->path.distribution = (Distribution *) copyObject(input_path->distribution);
+
+	int num = 1;
+	bool redist = false;
+	bool setscan = true;
+
+	// Check if already distributed (temporary fix to prevent crash under join distribution)
+	contains_remotesubplan_gpu(input_path,&num,&redist,&setscan);
+
+	elog(NOTICE,"[DEBUG](make_gpupreagg_path) -> # remotesubplan: %d",num);
+	
+	if(num == 1 && setscan ) {
+		
+		set_scanpath_distribution(root,cpath->path.parent, cpath);
+		elog(NOTICE,"[DEBUG](make_gpupreagg_path) -> scanpath_dist set");
+		
+		if (cpath->path.parent->baserestrictinfo)
+		{
+			ListCell *lc;
+			foreach (lc, cpath->path.parent->baserestrictinfo)
+			{
+				RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
+				restrict_distribution(root, ri, cpath);
+			}
+		}
+	
+	}
+	
+	if(num == 1) {
+		distribute_remote = true;
+	} else {
+		distribute_remote = false;
+	}
+	
+#endif
+
+
 	return cpath;
 }
 
@@ -1287,6 +1332,26 @@ prepend_gpupreagg_path(PlannerInfo *root,
 													  target_partial,
 													  NULL,
 													  &total_groups);
+#ifdef XZ
+			if (!olap_optimizer && root->group_pathkeys)
+				    partial_path = (Path *) create_sort_path(root,
+												 group_rel,
+												 partial_path,
+												 root->group_pathkeys,
+												 -1.0);
+
+			if(!can_push_down_grouping(root, root->parse, partial_path)) {
+				elog(NOTICE,"[DEBUG](prepend_gpureagg_path) -> gather -> can NOT push down");
+				
+				// ToDo: if (!redistribute_group)
+				//if(olap_optimizer) create_redistribute_grouping_path(root,root->parse,partial_path);
+				
+				partial_path = create_remotesubplan_path(root, partial_path, NULL);
+
+			} else {
+				elog(NOTICE,"[DEBUG](prepend_gpureagg_path) -> gather -> can push down");		
+			} 
+#endif	
 		}
 		else
 			partial_path = &cpath->path;
@@ -1328,6 +1393,14 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 	/* make a final grouping path (nogroup) */
 	if (!parse->groupClause)
 	{
+#ifdef XZ
+		// Future: Improve by splitting into partial agg
+		if(distribute_remote) {
+			elog(NOTICE,"[DEBUG](try_add_final_agg_paths) -> NO group -> remote subplan");
+		
+			partial_path = create_remotesubplan_path(root, partial_path, NULL);
+		}
+#endif
 		final_path = (Path *)create_agg_path(root,
 											 group_rel,
 											 partial_path,
@@ -1406,6 +1479,19 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 #endif
 			}
 			else if (parse->hasAggs)
+#ifdef XZ
+			{
+				elog(NOTICE,"[DEBUG](try_add_final_agg_paths) -> hasAggs; olap: %d",(int) olap_optimizer);
+				
+				if(distribute_remote) sort_path = create_remotesubplan_path(root, sort_path, NULL);
+
+				sort_path = (Path *)
+				create_sort_path(root,
+								 group_rel,
+								 sort_path,
+								 root->group_pathkeys,
+								 -1.0);
+#endif
 				final_path = (Path *)
 					create_agg_path(root,
 									group_rel,
@@ -1417,8 +1503,23 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 								    havingQuals,
 									agg_final_costs,
 									num_groups);
+#ifdef XZ
+			}
+#endif
 			else if (parse->groupClause)
 			{
+#ifdef XZ	
+				elog(NOTICE,"[DEBUG](try_add_final_agg_paths) -> groupClause");
+
+				if(distribute_remote) sort_path = create_remotesubplan_path(root, sort_path, NULL);
+				
+				sort_path = (Path *)
+				create_sort_path(root,
+								 group_rel,
+								 sort_path,
+								 root->group_pathkeys,
+								 -1.0);
+#endif
 				final_path = (Path *)
 					create_group_path(root,
 									  group_rel,
@@ -1458,6 +1559,9 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 											 num_groups);
 			if (hashaggtablesize < work_mem * 1024L)
 			{
+#ifdef XZ
+			if(distribute_remote) partial_path = create_remotesubplan_path(root, partial_path, NULL);
+#endif
 				final_path = (Path *)
 					create_agg_path(root,
 									group_rel,
@@ -6033,3 +6137,212 @@ pgstrom_init_gpupreagg(void)
 	create_upper_paths_next = create_upper_paths_hook;
 	create_upper_paths_hook = gpupreagg_add_grouping_paths;
 }
+
+#ifdef XZ
+void
+contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *setscan)
+{// #lizard forgives
+    if (!number)    
+        return;
+
+    if (!path)
+        return;
+			
+    switch(path->pathtype)
+    {
+        case T_RemoteSubplan:
+            {
+                RemoteSubPath *pathnode = (RemoteSubPath *)path;
+                
+                Distribution   *subdistribution = path->distribution;
+                
+                if (!subdistribution || subdistribution->distributionType == LOCATOR_TYPE_NONE)
+                {
+                    (*number)++;
+                }
+
+                if (subdistribution && (subdistribution->distributionType == LOCATOR_TYPE_HASH ||
+                    subdistribution->distributionType == LOCATOR_TYPE_SHARD))
+                    *redistribute = true;
+
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> T_RemoteSubplan %d, redist: %d, count: %d",(int) path->pathtype,(int) *redistribute,*number);
+                contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+            }
+            break;
+        case T_Gather:
+            {
+                GatherPath *pathnode = (GatherPath *)path;
+
+                contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+            }
+            break;
+		case T_GatherMerge:
+			{
+				GatherMergePath *pathnode = (GatherMergePath *)path;
+				
+				contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+			}
+			break;
+        case T_Agg:
+            {
+                if (IsA(path, AggPath))
+                {
+                    AggPath *pathnode = (AggPath *)path;
+
+                    contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+                }
+                else
+                {
+                    GroupingSetsPath *pathnode = (GroupingSetsPath *)path;
+
+                    contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+                }
+            }
+            break;
+        case T_HashJoin:
+            {
+                HashPath *pathnode = (HashPath *)path;
+
+                contains_remotesubplan_gpu(pathnode->jpath.innerjoinpath, number, redistribute, setscan);
+
+                contains_remotesubplan_gpu(pathnode->jpath.outerjoinpath, number, redistribute, setscan);
+            }
+            break;
+        case T_MergeJoin:
+            {
+                MergePath *pathnode = (MergePath *)path;
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> MergeJoin",(int) path->pathtype,(int) *redistribute,*number);
+				
+                contains_remotesubplan_gpu(pathnode->jpath.innerjoinpath, number, redistribute, setscan);
+
+                contains_remotesubplan_gpu(pathnode->jpath.outerjoinpath, number, redistribute, setscan);
+            }
+            break;
+        case T_NestLoop:
+            {
+                NestPath *pathnode = (NestPath *)path;
+
+                contains_remotesubplan_gpu(pathnode->innerjoinpath, number, redistribute, setscan);
+
+                contains_remotesubplan_gpu(pathnode->outerjoinpath, number, redistribute, setscan);
+            }
+            break;
+        case T_Material:
+            {
+                MaterialPath *pathnode = (MaterialPath *)path;
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> materialize");
+			
+                contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+            }
+            break;
+        case T_Unique:
+            {
+                UniquePath *pathnode = (UniquePath *)path;
+
+                contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+            }
+            break;
+        case T_SubqueryScan:
+            {
+                SubqueryScanPath *pathnode = (SubqueryScanPath *)path;
+
+                contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+            }
+            break;
+        case T_Result:
+            {
+                if (IsA(path, ProjectionPath))
+                {
+                    ProjectionPath *pathnode = (ProjectionPath *)path;
+
+                    contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+                }
+            }
+            break;
+        case T_ProjectSet:
+            {
+                ProjectSetPath *pathnode = (ProjectSetPath *)path;
+
+                contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+            }
+            break;
+        case T_Sort:
+            {
+                SortPath *pathnode = (SortPath *)path;
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> sort");
+				
+                contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+            }
+            break;
+        case T_Group:
+            {
+                GroupPath *pathnode = (GroupPath *)path;
+
+                contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
+            }
+            break;
+        case T_Append:
+            {
+                ListCell *cell;
+                AppendPath *pathnode = (AppendPath *)path;
+
+                foreach(cell, pathnode->subpaths)
+                {
+                    Path *p = (Path *)lfirst(cell);
+
+                    contains_remotesubplan_gpu(p, number, redistribute, setscan);
+                }
+            }
+            break;
+        case T_MergeAppend:
+            {
+                ListCell *cell;
+                MergeAppendPath *pathnode = (MergeAppendPath *)path;
+
+                foreach(cell, pathnode->subpaths)
+                {
+                    Path *p = (Path *)lfirst(cell);
+
+                    contains_remotesubplan_gpu(p, number, redistribute, setscan);
+                }
+            }
+            break;
+		case T_CustomPath:
+			{
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> CustomPath");
+				CustomPath *pathnode = (CustomPath *)path;
+				ListCell *cell;
+				foreach(cell, pathnode->custom_paths)
+                {
+                    Path *p = (Path *)lfirst(cell);
+
+                    contains_remotesubplan_gpu(p, number, redistribute, setscan);
+                }
+			}
+			break;
+		case T_CustomScan:
+			{
+				CustomPath *pathnode = (CustomPath *)path;
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> CustomScan (%s)",pathnode->methods->CustomName);
+				
+				// GpuScan already sets the distribution
+				if(strcmp(pathnode->methods->CustomName, "GpuScan") == 0) {
+					(*setscan) = false;
+				}
+				
+				ListCell *cell;
+				foreach(cell, pathnode->custom_paths)
+                {
+                    Path *p = (Path *)lfirst(cell);
+
+                    contains_remotesubplan_gpu(p, number, redistribute, setscan);
+                }
+			}
+			break;
+		
+        default:			
+			elog(NOTICE,"[DEBUG](remotesubplan_gpu) NodeTag: %d",(int) path->pathtype);
+            break;
+    }
+}
+#endif
