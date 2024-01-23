@@ -3758,7 +3758,7 @@ checkArrowRecordBatchIsVisible(RecordBatchState *rbstate,
 #ifndef XZ
 			if (TransactionIdIsCurrentTransactionId(mvcc->xid))
 #else
-			if ( GetCurrentTransactionId() > mvcc->xid )
+			if ( GetCurrentTransactionId() >= mvcc->xid )
 #endif
 				return true;
 			else
