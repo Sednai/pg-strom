@@ -3747,7 +3747,6 @@ checkArrowRecordBatchIsVisible(RecordBatchState *rbstate,
 							   dlist_head *mvcc_slot)
 {
 	dlist_iter		iter;
-
 	dlist_foreach(iter, mvcc_slot)
 	{
 		arrowWriteMVCCLog  *mvcc = dlist_container(arrowWriteMVCCLog,
@@ -3756,7 +3755,11 @@ checkArrowRecordBatchIsVisible(RecordBatchState *rbstate,
 			mvcc->key.st_ino == rbstate->stat_buf.st_ino &&
 			mvcc->record_batch == rbstate->rb_index)
 		{
+#ifndef XZ
 			if (TransactionIdIsCurrentTransactionId(mvcc->xid))
+#else
+			if ( GetCurrentTransactionId() > mvcc->xid )
+#endif
 				return true;
 			else
 				return false;
