@@ -1224,14 +1224,15 @@ make_gpupreagg_path(PlannerInfo *root,
 
 	// Check if already distributed (temporary fix to prevent crash under join distribution)
 	contains_remotesubplan_gpu(input_path,&num,&redist,&setscan);
-
+#ifdef XZ_DEBUG
 	elog(NOTICE,"[DEBUG](make_gpupreagg_path) -> # remotesubplan: %d",num);
-	
+#endif
 	if(num == 1 && setscan ) {
 		
 		set_scanpath_distribution(root,cpath->path.parent, cpath);
+#ifdef XZ_DEBUG
 		elog(NOTICE,"[DEBUG](make_gpupreagg_path) -> scanpath_dist set");
-		
+#endif
 		if (cpath->path.parent->baserestrictinfo)
 		{
 			ListCell *lc;
@@ -1341,15 +1342,18 @@ prepend_gpupreagg_path(PlannerInfo *root,
 												 -1.0);
 
 			if(!can_push_down_grouping(root, root->parse, partial_path)) {
+#ifdef XZ_DEBUG
 				elog(NOTICE,"[DEBUG](prepend_gpureagg_path) -> gather -> can NOT push down");
-				
+#endif				
 				// ToDo: if (!redistribute_group)
 				//if(olap_optimizer) create_redistribute_grouping_path(root,root->parse,partial_path);
 				
 				partial_path = create_remotesubplan_path(root, partial_path, NULL);
 
 			} else {
-				elog(NOTICE,"[DEBUG](prepend_gpureagg_path) -> gather -> can push down");		
+#ifdef XZ_DEBUG
+				elog(NOTICE,"[DEBUG](prepend_gpureagg_path) -> gather -> can push down");	
+#endif	
 			} 
 #endif	
 		}
@@ -1396,8 +1400,9 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 #ifdef XZ
 		// Future: Improve by splitting into partial agg
 		if(distribute_remote) {
+#ifdef XZ_DEBUG
 			elog(NOTICE,"[DEBUG](try_add_final_agg_paths) -> NO group -> remote subplan");
-		
+#endif
 			partial_path = create_remotesubplan_path(root, partial_path, NULL);
 		}
 #endif
@@ -1481,8 +1486,9 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 			else if (parse->hasAggs)
 #ifdef XZ
 			{
+#ifdef XZ_DEBUG
 				elog(NOTICE,"[DEBUG](try_add_final_agg_paths) -> hasAggs; olap: %d",(int) olap_optimizer);
-				
+#endif
 				if(distribute_remote) sort_path = create_remotesubplan_path(root, sort_path, NULL);
 
 				sort_path = (Path *)
@@ -1508,8 +1514,10 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 #endif
 			else if (parse->groupClause)
 			{
-#ifdef XZ	
+#ifdef XZ_DEBUG	
 				elog(NOTICE,"[DEBUG](try_add_final_agg_paths) -> groupClause");
+#endif
+#ifdef XZ	
 
 				if(distribute_remote) sort_path = create_remotesubplan_path(root, sort_path, NULL);
 				
@@ -6165,7 +6173,9 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
                     subdistribution->distributionType == LOCATOR_TYPE_SHARD))
                     *redistribute = true;
 
+#ifdef XZ_DEBUG	
 				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> T_RemoteSubplan %d, redist: %d, count: %d",(int) path->pathtype,(int) *redistribute,*number);
+#endif
                 contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
             }
             break;
@@ -6211,8 +6221,9 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
         case T_MergeJoin:
             {
                 MergePath *pathnode = (MergePath *)path;
+#ifdef XZ_DEBUG	
 				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> MergeJoin",(int) path->pathtype,(int) *redistribute,*number);
-				
+#endif
                 contains_remotesubplan_gpu(pathnode->jpath.innerjoinpath, number, redistribute, setscan);
 
                 contains_remotesubplan_gpu(pathnode->jpath.outerjoinpath, number, redistribute, setscan);
@@ -6230,8 +6241,9 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
         case T_Material:
             {
                 MaterialPath *pathnode = (MaterialPath *)path;
+#ifdef XZ_DEBUG	
 				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> materialize");
-			
+#endif
                 contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
             }
             break;
@@ -6269,8 +6281,9 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
         case T_Sort:
             {
                 SortPath *pathnode = (SortPath *)path;
+#ifdef XZ_DEBUG	
 				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> sort");
-				
+#endif
                 contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
             }
             break;
@@ -6309,7 +6322,9 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
             break;
 		case T_CustomPath:
 			{
+#ifdef XZ_DEBUG	
 				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> CustomPath");
+#endif
 				CustomPath *pathnode = (CustomPath *)path;
 				ListCell *cell;
 				foreach(cell, pathnode->custom_paths)
@@ -6323,8 +6338,9 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
 		case T_CustomScan:
 			{
 				CustomPath *pathnode = (CustomPath *)path;
+#ifdef XZ_DEBUG	
 				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> CustomScan (%s)",pathnode->methods->CustomName);
-				
+#endif
 				// GpuScan already sets the distribution
 				if(strcmp(pathnode->methods->CustomName, "GpuScan") == 0) {
 					(*setscan) = false;
@@ -6340,8 +6356,10 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
 			}
 			break;
 		
-        default:			
+        default:
+#ifdef XZ_DEBUG				
 			elog(NOTICE,"[DEBUG](remotesubplan_gpu) NodeTag: %d",(int) path->pathtype);
+#endif
             break;
     }
 }
