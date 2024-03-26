@@ -1225,7 +1225,7 @@ make_gpupreagg_path(PlannerInfo *root,
 	// Check if already distributed (temporary fix to prevent crash under join distribution)
 	contains_remotesubplan_gpu(input_path,&num,&redist,&setscan);
 #ifdef XZ_DEBUG
-	elog(NOTICE,"[DEBUG](make_gpupreagg_path) -> # remotesubplan: %d",num);
+	elog(NOTICE,"[DEBUG](make_gpupreagg_path) -> # remotesubplan: %d | setscan: %d",num,setscan);
 #endif
 	if(num == 1 && setscan ) {
 		
@@ -6160,6 +6160,9 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
     {
         case T_RemoteSubplan:
             {
+#ifdef XZ_DEBUG	
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> RemoteSubplan");
+#endif
                 RemoteSubPath *pathnode = (RemoteSubPath *)path;
                 
                 Distribution   *subdistribution = path->distribution;
@@ -6181,6 +6184,10 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
             break;
         case T_Gather:
             {
+#ifdef XZ_DEBUG	
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> Gather");
+#endif
+
                 GatherPath *pathnode = (GatherPath *)path;
 
                 contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
@@ -6195,6 +6202,10 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
 			break;
         case T_Agg:
             {
+#ifdef XZ_DEBUG	
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> Agg");
+#endif
+
                 if (IsA(path, AggPath))
                 {
                     AggPath *pathnode = (AggPath *)path;
@@ -6256,6 +6267,11 @@ contains_remotesubplan_gpu(Path *path, int *number, bool *redistribute, bool *se
             break;
         case T_SubqueryScan:
             {
+#ifdef XZ_DEBUG	
+				elog(NOTICE,"[DEBUG](remotesubplan_gpu) -> SubqueryScan");
+#endif
+				// No base relation
+				(*setscan) = false;
                 SubqueryScanPath *pathnode = (SubqueryScanPath *)path;
 
                 contains_remotesubplan_gpu(pathnode->subpath, number, redistribute, setscan);
