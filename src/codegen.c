@@ -430,22 +430,32 @@ pgstrom_devtype_lookup(Oid type_oid)
 	tcache = lookup_type_cache(type_oid,
 							   TYPECACHE_EQ_OPR |
 							   TYPECACHE_CMP_PROC);
+
 	if (OidIsValid(tcache->typrelid))
 	{
 		/* composite type */
 		dtype = build_composite_devtype_info(tcache);
 	}
-	else if (OidIsValid(tcache->typelem) && tcache->typlen == -1)
-	{
-		/* array type */
-		dtype = build_array_devtype_info(tcache);
-	}
 	else
-	{
-		/* base or extra type */
-		dtype = build_basic_devtype_info(tcache);
+#ifdef XZ
+		{ 	
+		Oid		typelem = get_element_type(tcache->type_id);
+		if (OidIsValid(typelem) && tcache->typlen == -1)
+#else
+		if (OidIsValid(tcache->typelem) && tcache->typlen == -1)
+#endif
+		{
+			/* array type */
+			dtype = build_array_devtype_info(tcache);
+		}
+		else
+		{
+			/* base or extra type */
+			dtype = build_basic_devtype_info(tcache);
+		}
+#ifdef XZ
 	}
-	
+#endif
 	/* makes a negative entry, if not in the catalog */
 	if (!dtype)
 	{

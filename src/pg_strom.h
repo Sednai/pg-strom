@@ -301,6 +301,10 @@ typedef struct GpuContext
 typedef cl_long					ProgramId;
 #define INVALID_PROGRAM_ID		(-1L)
 
+#ifdef XZ
+#undef PAGE_SIZE
+#endif
+
 /*
  * GpuTask and related
  */

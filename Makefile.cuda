@@ -24,7 +24,7 @@ CUDA_VERSION := $(shell grep -E '^\#define[ ]+CUDA_VERSION[ ]+[0-9]+$$' $(CUDA_I
 MAXREGCOUNT := 128
 
 # flags to build GPU libraries
-__NVCC_FLAGS ?= $(NVCC_FLAGS_CUSTOM)
+__NVCC_FLAGS ?= $(NVCC_FLAGS_CUSTOM) -DPGXC -DXCP -DXZ
 __NVCC_FLAGS += -I $(shell $(PG_CONFIG) --includedir-server) \
                 --fatbin \
                 --maxrregcount=$(MAXREGCOUNT) \

@@ -147,7 +147,11 @@ typedef union		ArrowTypeOptions
 #include <unistd.h>
 
 #ifndef bool
+#ifndef XZ
 typedef unsigned char	bool;
+#else
+typedef char 	bool;
+#endif
 #endif
 #ifndef true
 #define true	((bool) 1)

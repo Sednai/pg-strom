@@ -266,6 +266,19 @@ create_gpuscan_path(PlannerInfo *root,
 	cpath->custom_private = list_make1(gs_info);
 	cpath->methods = &gpuscan_path_methods;
 
+#ifdef XZ
+	set_scanpath_distribution(root, baserel, cpath);
+		if (baserel->baserestrictinfo)
+		{
+			ListCell *lc;
+			foreach (lc, baserel->baserestrictinfo)
+			{
+				RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
+				restrict_distribution(root, ri, cpath);
+			}
+		}
+#endif
+
 	return &cpath->path;
 }
 
