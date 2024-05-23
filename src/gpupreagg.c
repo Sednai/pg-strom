@@ -3450,11 +3450,19 @@ gpupreagg_codegen_projection(StringInfo kern,
 	/*
 	 * Extract tlist for device projection (a.k.a template of kds_slot)
 	 */
+	#ifndef XZ
 	tlist_part = make_tlist_device_projection(cscan->scan.plan.targetlist,
-											  cscan->scan.scanrelid,
+	 										  cscan->scan.scanrelid,
 											  outer_tlist,
 											  &outer_refs_any,
 											  &outer_refs_expr);
+	#else
+	tlist_part = make_tlist_device_projection(cscan->custom_scan_tlist,
+ 											  cscan->scan.scanrelid,
+											  outer_tlist,
+											  &outer_refs_any,
+											  &outer_refs_expr);
+	#endif
 	initStringInfo(&decl);
 	initStringInfo(&tbody);
 	initStringInfo(&sbody);
