@@ -1219,34 +1219,36 @@ make_gpupreagg_path(PlannerInfo *root,
 	cpath->methods = &gpupreagg_path_methods;
 
 #ifdef XZ
-	cpath->path.distribution = (Distribution *) copyObject(input_path->distribution);
+if(IS_PGXC_COORDINATOR) {	
+		cpath->path.distribution = (Distribution *) copyObject(input_path->distribution);
 
-	int num = 1;
-	bool redist = false;
-	bool setscan = true;
+		int num = 1;
+		bool redist = false;
+		bool setscan = true;
 
-	// Check if already distributed
-	contains_remotesubplan_gpu(input_path,&num,&redist,&setscan);
+		// Check if already distributed
+		contains_remotesubplan_gpu(input_path,&num,&redist,&setscan);
 
-	if(setscan)
-	{
-		set_scanpath_distribution(root,cpath->path.parent, cpath);
-		if (cpath->path.parent->baserestrictinfo)
+		if(setscan)
 		{
-			ListCell *lc;
-			foreach (lc, cpath->path.parent->baserestrictinfo)
+			set_scanpath_distribution(root,cpath->path.parent, cpath);
+			if (cpath->path.parent->baserestrictinfo)
 			{
-				RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
-				restrict_distribution(root, ri, cpath);
+				ListCell *lc;
+				foreach (lc, cpath->path.parent->baserestrictinfo)
+				{
+					RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
+					restrict_distribution(root, ri, cpath);
+				}
 			}
 		}
-	}
 
-	if(num == 1) {
-		distribute_remote = true;
-	} else {
-		distribute_remote = false;
-	}
+		if(num == 1) {
+			distribute_remote = true;
+		} else {
+			distribute_remote = false;
+		}
+}
 #endif
 
 	return cpath;
@@ -3045,7 +3047,12 @@ __revert_tlist_device_projection(Node *node, void *datum)
 		Assert(varnode->varno == OUTER_VAR &&
 			   varnode->varattno > 0 &&
 			   varnode->varattno <= list_length(outer_tlist));
+#ifndef XZ
 		temp = list_nth(outer_tlist, varnode->varattno - 1);
+#else
+		TargetEntry *tle = list_nth(outer_tlist, varnode->varattno - 1);
+     	temp = (Node *)tle->expr;
+#endif
 		return copyObject(temp);
 	}
 	return expression_tree_mutator(node, __revert_tlist_device_projection, datum);

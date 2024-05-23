@@ -220,7 +220,9 @@
 #include <sys/vfs.h>
 #include "heterodb_extra.h"
 #include "arrow_defs.h"
-
+#ifdef XZ
+#include "pgxc/pgxc.h"
+#endif
 /*
  * --------------------------------------------------------------------
  *

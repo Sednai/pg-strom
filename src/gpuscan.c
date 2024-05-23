@@ -267,16 +267,18 @@ create_gpuscan_path(PlannerInfo *root,
 	cpath->methods = &gpuscan_path_methods;
 
 #ifdef XZ
-	set_scanpath_distribution(root, baserel, cpath);
-		if (baserel->baserestrictinfo)
-		{
-			ListCell *lc;
-			foreach (lc, baserel->baserestrictinfo)
+	if(IS_PGXC_COORDINATOR) {	
+		set_scanpath_distribution(root, baserel, cpath);
+			if (baserel->baserestrictinfo)
 			{
-				RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
-				restrict_distribution(root, ri, cpath);
+				ListCell *lc;
+				foreach (lc, baserel->baserestrictinfo)
+				{
+					RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
+					restrict_distribution(root, ri, cpath);
+				}
 			}
-		}
+	}
 #endif
 
 	return &cpath->path;

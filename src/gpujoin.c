@@ -2589,9 +2589,11 @@ try_add_gpujoin_paths(PlannerInfo *root,
 			return;
 	}
 
-#ifdef XZ	
-	outer_path = create_remotesubplan_path(root, outer_path, NULL);
-	inner_path = create_remotesubplan_path(root, inner_path, NULL);
+#ifdef XZ
+	if(IS_PGXC_COORDINATOR) {	
+		outer_path = create_remotesubplan_path(root, outer_path, NULL);
+		inner_path = create_remotesubplan_path(root, inner_path, NULL);
+	}
 #endif
 
 	/*
