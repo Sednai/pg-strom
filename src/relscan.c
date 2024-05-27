@@ -418,6 +418,7 @@ pgstrom_tryfind_brinindex(PlannerInfo *root,
  * pgstrom_common_relscan_cost
  */
 int
+#ifndef XZ
 pgstrom_common_relscan_cost(PlannerInfo *root,
 							RelOptInfo *scan_rel,
 							List *scan_quals,
@@ -431,6 +432,23 @@ pgstrom_common_relscan_cost(PlannerInfo *root,
 							cl_uint *p_nrows_per_block,
 							Cost *p_startup_cost,
 							Cost *p_run_cost)
+#else 
+pgstrom_common_relscan_cost(Path *path,
+							PlannerInfo *root,
+							RelOptInfo *scan_rel,
+							List *scan_quals,
+							int parallel_workers,
+							IndexOptInfo *indexOpt,
+							List *indexQuals,
+							cl_long indexNBlocks,
+							double *p_parallel_divisor,
+							double *p_scan_ntuples,
+							double *p_scan_nchunks,
+							cl_uint *p_nrows_per_block,
+							Cost *p_startup_cost,
+							Cost *p_run_cost)
+
+#endif
 {
 	int			scan_mode = 0;
 	Cost		startup_cost = 0.0;
@@ -450,7 +468,10 @@ pgstrom_common_relscan_cost(PlannerInfo *root,
 	Size		htup_size;
 	QualCost	qcost;
 	ListCell   *lc;
-
+#ifdef XZ
+	double		num_nodes = path_count_datanodes(path);
+	//elog(WARNING,"[DEBUG] num_nodes: %f",num_nodes);
+#endif
 	Assert((scan_rel->reloptkind == RELOPT_BASEREL ||
 			scan_rel->reloptkind == RELOPT_OTHER_MEMBER_REL) &&
 		   scan_rel->relid > 0 &&
@@ -473,7 +494,11 @@ pgstrom_common_relscan_cost(PlannerInfo *root,
 		get_tablespace_page_costs(scan_rel->reltablespace,
 								  &spc_rand_page_cost,
 								  &spc_seq_page_cost);
+#ifndef XZ
 		disk_scan_cost = spc_seq_page_cost * nblocks;
+#else
+		disk_scan_cost = spc_seq_page_cost * nblocks/num_nodes;
+#endif
 	}
 
 	/* consideration for BRIN-index, if any */
@@ -490,14 +515,26 @@ pgstrom_common_relscan_cost(PlannerInfo *root,
 		get_tablespace_page_costs(indexOpt->reltablespace,
 								  &spc_rand_page_cost,
 								  &spc_seq_page_cost);
+#ifndef XZ
 		index_scan_cost = spc_seq_page_cost * statsData.revmapNumPages;
+#else
+		index_scan_cost = spc_seq_page_cost * statsData.revmapNumPages/num_nodes;
+#endif
 		foreach (lc, indexQuals)
 		{
 			cost_qual_eval_node(&qcost, (Node *)lfirst(lc), root);
+#ifndef XZ
 			index_scan_cost += qcost.startup + qcost.per_tuple;
+#else
+			index_scan_cost += qcost.startup + qcost.per_tuple/num_nodes;
+#endif
 		}
 
+#ifndef XZ
 		x = index_scan_cost + spc_rand_page_cost * (double)indexNBlocks;
+#else
+		x = index_scan_cost + spc_rand_page_cost * (double)indexNBlocks/num_nodes;
+#endif
 		if (disk_scan_cost > x)
 		{
 			disk_scan_cost = x;
@@ -594,11 +631,19 @@ pgstrom_common_relscan_cost(PlannerInfo *root,
 	/* Cost for GPU qualifiers */
 	cost_qual_eval_node(&qcost, (Node *)scan_quals, root);
 	startup_cost += qcost.startup;
+#ifndef XZ
 	run_cost += qcost.per_tuple * gpu_ratio * ntuples;
+#else
+	run_cost += qcost.per_tuple * gpu_ratio * ntuples/num_nodes;
+#endif
 	ntuples *= selectivity;
 
 	/* Cost for DMA transfer (host/storage --> GPU) */
+#ifndef XZ
 	run_cost += pgstrom_gpu_dma_cost * nchunks;
+#else
+	run_cost += pgstrom_gpu_dma_cost * nchunks/num_nodes;
+#endif
 
 	*p_parallel_divisor = parallel_divisor;
 	*p_scan_ntuples = ntuples / parallel_divisor;

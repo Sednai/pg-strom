@@ -633,7 +633,10 @@ cost_gpujoin(PlannerInfo *root,
 	double		outer_ntuples = outer_path->rows;
 	int			i, num_rels = gpath->num_rels;
 	bool		retval = false;
-
+#ifdef XZ
+	double		num_nodes = path_count_datanodes(gpath);
+	//elog(WARNING,"[DEBUG](gpupjoin) num_nodes: %f",num_nodes);
+#endif
 	/*
 	 * Cost comes from the outer-path
 	 */
@@ -641,6 +644,7 @@ cost_gpujoin(PlannerInfo *root,
 	{
 		double		dummy;
 
+#ifndef XZ
 		pgstrom_common_relscan_cost(root,
 									outer_path->parent,
 									gpath->outer_quals,
@@ -654,6 +658,22 @@ cost_gpujoin(PlannerInfo *root,
 									&gpath->outer_nrows_per_block,
 									&startup_cost,
 									&run_cost);
+#else
+		pgstrom_common_relscan_cost(gpath,
+									root,
+									outer_path->parent,
+									gpath->outer_quals,
+									parallel_nworkers,	/* parallel scan */
+									gpath->index_opt,
+									gpath->index_quals,
+									gpath->index_nblocks,
+									&parallel_divisor,
+									&dummy,
+									&num_chunks,
+									&gpath->outer_nrows_per_block,
+									&startup_cost,
+									&run_cost);
+#endif
 		outer_ntuples /= parallel_divisor;
 	}
 	else

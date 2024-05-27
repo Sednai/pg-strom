@@ -1112,6 +1112,8 @@ extern IndexOptInfo *pgstrom_tryfind_brinindex(PlannerInfo *root,
 #define PGSTROM_RELSCAN_BRIN_INDEX		0x0002
 #define PGSTROM_RELSCAN_ARROW_FDW		0x0004
 #define PGSTROM_RELSCAN_GPU_CACHE		0x0008
+
+#ifndef XZ
 extern int pgstrom_common_relscan_cost(PlannerInfo *root,
 									   RelOptInfo *scan_rel,
 									   List *scan_quals,
@@ -1125,6 +1127,22 @@ extern int pgstrom_common_relscan_cost(PlannerInfo *root,
 									   cl_uint *p_nrows_per_block,
 									   Cost *p_startup_cost,
 									   Cost *p_run_cost);
+#else
+extern int pgstrom_common_relscan_cost(Path *path,
+									   PlannerInfo *root,
+									   RelOptInfo *scan_rel,
+									   List *scan_quals,
+									   int parallel_workers,
+									   IndexOptInfo *indexOpt,
+									   List *indexQuals,
+									   cl_long indexNBlocks,
+									   double *p_parallel_divisor,
+									   double *p_scan_ntuples,
+									   double *p_scan_nchunks,
+									   cl_uint *p_nrows_per_block,
+									   Cost *p_startup_cost,
+									   Cost *p_run_cost);
+#endif
 extern Bitmapset *pgstrom_pullup_outer_refs(PlannerInfo *root,
 											RelOptInfo *base_rel,
 											Bitmapset *referenced);

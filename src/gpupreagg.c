@@ -1063,7 +1063,10 @@ cost_gpupreagg(PlannerInfo *root,
 	Size		extra_sz = 0;
 	cl_int		index;
 	ListCell   *lc;
-
+#ifdef XZ
+	double		num_nodes = path_count_datanodes(input_path);
+	elog(WARNING,"[DEBUG](gpupreagg) num_nodes: %f",num_nodes);
+#endif
 	/* Cost come from the underlying path */
 	if (gpa_info->outer_scanrelid == 0)
 	{
@@ -1081,8 +1084,13 @@ cost_gpupreagg(PlannerInfo *root,
 			pgstrom_path_is_gpujoin(input_path) &&
 			pgstrom_device_expression(root, outer_rel, (Expr *)outer_tlist))
 		{
+#ifndef XZ
 			discount = (cost_for_dma_receive(input_path->parent, -1.0) +
 						cpu_tuple_cost * input_path->rows);
+#else
+			discount = (cost_for_dma_receive(input_path->parent, -1.0) +
+						cpu_tuple_cost * input_path->rows/num_nodes);
+#endif
 		}
 		else if (pathtree_has_gpupath(input_path))
 			outer_total += pgstrom_gpu_setup_cost / 2;
@@ -1101,6 +1109,7 @@ cost_gpupreagg(PlannerInfo *root,
 		double		ntuples;
 		double		nchunks;
 
+#ifndef XZ
 		pgstrom_common_relscan_cost(root,
 									input_path->parent,
 									gpa_info->outer_quals,
@@ -1114,7 +1123,28 @@ cost_gpupreagg(PlannerInfo *root,
 									&gpa_info->outer_nrows_per_block,
 									&startup_cost,
 									&run_cost);
+#else
+		pgstrom_common_relscan_cost(input_path,
+									root,
+									input_path->parent,
+									gpa_info->outer_quals,
+									parallel_nworkers,	/* parallel scan */
+									index_opt,			/* BRIN-index */
+									index_quals,		/* BRIN-index */
+									index_nblocks,		/* BRIN-index */
+									&ntuples,
+									&nchunks,
+									&parallel_divisor,
+									&gpa_info->outer_nrows_per_block,
+									&startup_cost,
+									&run_cost);
+#endif
+#ifndef XZ
 		run_cost -= cpu_tuple_cost * ntuples;
+#else
+		run_cost -= cpu_tuple_cost * ntuples/num_nodes;
+#endif
+
 		if (run_cost < 0.0)
 			run_cost = 0.0;
 		gpa_info->outer_startup_cost = startup_cost;
@@ -1158,6 +1188,7 @@ cost_gpupreagg(PlannerInfo *root,
 
 	/* Cost estimation for the initial projection */
 	cost_qual_eval(&qual_cost, target_device->exprs, root);
+#ifndef XZ
 	startup_cost += (target_device->cost.per_tuple * input_path->rows +
 					 target_device->cost.startup) * gpu_cpu_ratio;
 	/* Cost estimation for grouping */
@@ -1167,6 +1198,17 @@ cost_gpupreagg(PlannerInfo *root,
 	/* Cost estimation for aggregate function */
 	startup_cost += (target_device->cost.per_tuple * input_path->rows +
 					 target_device->cost.startup) * gpu_cpu_ratio;
+#else
+	startup_cost += (target_device->cost.per_tuple * input_path->rows/num_nodes +
+					 target_device->cost.startup) * gpu_cpu_ratio;
+	/* Cost estimation for grouping */
+	startup_cost += (pgstrom_gpu_operator_cost *
+					 num_group_keys *
+					 input_path->rows/num_nodes);
+	/* Cost estimation for aggregate function */
+	startup_cost += (target_device->cost.per_tuple * input_path->rows/num_nodes +
+					 target_device->cost.startup) * gpu_cpu_ratio;
+#endif
 	/* Cost estimation for host side functions */
 	startup_cost += target_partial->cost.startup;
 	run_cost += target_partial->cost.per_tuple * num_groups;
@@ -1624,6 +1666,9 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 								havingQuals,
 								agg_final_costs,
 								num_groups);
+
+
+
 #else
 				final_path = (Path *)
 					create_agg_path(root,

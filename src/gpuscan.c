@@ -186,6 +186,45 @@ create_gpuscan_path(PlannerInfo *root,
 	double			cpu_per_tuple = 0.0;
 	int				scan_mode;
 
+#ifdef XZ
+	param_info = get_baserel_parampathinfo(root, baserel,
+										   baserel->lateral_relids);
+	cpath = makeNode(CustomPath);
+	cpath->path.pathtype = T_CustomScan;
+	cpath->path.parent = baserel;
+	cpath->path.pathtarget = baserel->reltarget;
+	cpath->path.param_info = param_info;
+	
+	if(IS_PGXC_COORDINATOR) {	
+		set_scanpath_distribution(root, baserel, cpath);
+			if (baserel->baserestrictinfo)
+			{
+				ListCell *lc;
+				foreach (lc, baserel->baserestrictinfo)
+				{
+					RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
+					restrict_distribution(root, ri, cpath);
+				}
+			}
+	}
+
+	/* cost for disk i/o + GPU qualifiers */
+	scan_mode = pgstrom_common_relscan_cost(cpath,
+											root,
+											baserel,
+											extract_actual_clauses(dev_quals, false),
+											parallel_nworkers,
+											indexOpt,
+											indexQuals,
+											indexNBlocks,
+											&parallel_divisor,
+											&scan_ntuples,
+											&scan_nchunks,
+											&gs_info->nrows_per_block,
+											&startup_cost,
+											&run_cost);
+
+#else
 	/* cost for disk i/o + GPU qualifiers */
 	scan_mode = pgstrom_common_relscan_cost(root,
 											baserel,
@@ -200,6 +239,9 @@ create_gpuscan_path(PlannerInfo *root,
 											&gs_info->nrows_per_block,
 											&startup_cost,
 											&run_cost);
+#endif
+
+
 	/* save the optimal GPU for the scan target */
 	gs_info->optimal_gpu = GetOptimalGpuForRelation(root, baserel);
 	/* save the BRIN-index if preferable to use */
@@ -210,6 +252,7 @@ create_gpuscan_path(PlannerInfo *root,
 		gs_info->index_quals = indexQuals;
 	}
 
+#ifndef XZ
 	param_info = get_baserel_parampathinfo(root, baserel,
 										   baserel->lateral_relids);
 	cpath = makeNode(CustomPath);
@@ -217,6 +260,7 @@ create_gpuscan_path(PlannerInfo *root,
 	cpath->path.parent = baserel;
 	cpath->path.pathtarget = baserel->reltarget;
 	cpath->path.param_info = param_info;
+#endif
 	cpath->path.parallel_aware = parallel_nworkers > 0 ? true : false;
 	cpath->path.parallel_safe = baserel->consider_parallel;
 	cpath->path.parallel_workers = parallel_nworkers;
@@ -265,21 +309,6 @@ create_gpuscan_path(PlannerInfo *root,
 	cpath->custom_paths = NIL;
 	cpath->custom_private = list_make1(gs_info);
 	cpath->methods = &gpuscan_path_methods;
-
-#ifdef XZ
-	if(IS_PGXC_COORDINATOR) {	
-		set_scanpath_distribution(root, baserel, cpath);
-			if (baserel->baserestrictinfo)
-			{
-				ListCell *lc;
-				foreach (lc, baserel->baserestrictinfo)
-				{
-					RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
-					restrict_distribution(root, ri, cpath);
-				}
-			}
-	}
-#endif
 
 	return &cpath->path;
 }
