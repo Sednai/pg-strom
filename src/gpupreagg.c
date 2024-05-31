@@ -1065,7 +1065,7 @@ cost_gpupreagg(PlannerInfo *root,
 	ListCell   *lc;
 #ifdef XZ
 	double		num_nodes = path_count_datanodes(input_path);
-	elog(WARNING,"[DEBUG](gpupreagg) num_nodes: %f",num_nodes);
+	//elog(WARNING,"[DEBUG](gpupreagg) num_nodes: %f",num_nodes);
 #endif
 	/* Cost come from the underlying path */
 	if (gpa_info->outer_scanrelid == 0)
@@ -1198,6 +1198,12 @@ cost_gpupreagg(PlannerInfo *root,
 	/* Cost estimation for aggregate function */
 	startup_cost += (target_device->cost.per_tuple * input_path->rows +
 					 target_device->cost.startup) * gpu_cpu_ratio;
+	/* Cost estimation for host side functions */
+	startup_cost += target_partial->cost.startup;
+	run_cost += target_partial->cost.per_tuple * num_groups;
+	/* Cost estimation to fetch results */
+	run_cost += cpu_tuple_cost * num_groups;
+
 #else
 	startup_cost += (target_device->cost.per_tuple * input_path->rows/num_nodes +
 					 target_device->cost.startup) * gpu_cpu_ratio;
@@ -1208,14 +1214,14 @@ cost_gpupreagg(PlannerInfo *root,
 	/* Cost estimation for aggregate function */
 	startup_cost += (target_device->cost.per_tuple * input_path->rows/num_nodes +
 					 target_device->cost.startup) * gpu_cpu_ratio;
-#endif
 	/* Cost estimation for host side functions */
 	startup_cost += target_partial->cost.startup;
-	run_cost += target_partial->cost.per_tuple * num_groups;
-
+	run_cost += target_partial->cost.per_tuple * num_groups/num_nodes;
 	/* Cost estimation to fetch results */
-	run_cost += cpu_tuple_cost * num_groups;
+	run_cost += cpu_tuple_cost * num_groups/num_nodes;
+#endif
 
+	
 	cpath->path.rows			= num_groups;
 	cpath->path.startup_cost	= startup_cost;
 	cpath->path.total_cost		= startup_cost + run_cost;
@@ -1452,13 +1458,13 @@ prepend_gpupreagg_path(PlannerInfo *root,
 												 root->group_pathkeys,
 												 -1.0);
 
-			if(!can_push_down_grouping(root, root->parse, partial_path)) 
-			{
+	//		if(!can_push_down_grouping(root, root->parse, partial_path)) 
+//			{
 				// ToDo: if (!redistribute_group)
 				//if(olap_optimizer) create_redistribute_grouping_path(root,root->parse,partial_path);
 				
-				partial_path = create_remotesubplan_path(root, partial_path, NULL);
-			}
+	// XZDEBUG			//partial_path = create_remotesubplan_path(root, partial_path, NULL);
+//			}
 #endif
 		}
 		else
@@ -1501,7 +1507,9 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 	if (!parse->groupClause)
 	{
 #ifdef XZ
-		if(distribute_remote) partial_path = create_remotesubplan_path(root, partial_path, NULL);
+		if(distribute_remote) {
+				partial_path = create_remotesubplan_path(root, partial_path, NULL);
+		} 
 #endif
 		final_path = (Path *)create_agg_path(root,
 											 group_rel,
@@ -2470,6 +2478,7 @@ make_alternative_aggref(PlannerInfo *root,
 	 */
 	aggfn_cat = aggfunc_lookup_by_oid(aggref->aggfnoid,
 									  aggref->aggdistinct != NIL);
+
 	if (!aggfn_cat)
 	{
 		elog(DEBUG2, "Aggregate function is not device executable: %s",
