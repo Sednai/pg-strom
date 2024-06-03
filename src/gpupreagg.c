@@ -1530,12 +1530,26 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 		{
 			PathTarget *target_orig __attribute__((unused));
 
+#ifdef XZ
+if(!distribute_remote) {
 			sort_path = (Path *)
 				create_sort_path(root,
 								 group_rel,
 								 partial_path,
 								 root->group_pathkeys,
 								 -1.0);
+} else {
+	sort_path = partial_path;
+}
+#else
+	sort_path = (Path *)
+				create_sort_path(root,
+								 group_rel,
+								 partial_path,
+								 root->group_pathkeys,
+								 -1.0);
+#endif
+
 			if (parse->groupingSets)
 			{
 				AggStrategy	rollup_strategy = AGG_PLAIN;
@@ -1589,14 +1603,27 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 			else if (parse->hasAggs)
 #ifdef XZ
 			{
-				if(distribute_remote) sort_path = create_remotesubplan_path(root, sort_path, NULL);
-
-				sort_path = (Path *)
-				create_sort_path(root,
-								 group_rel,
-								 sort_path,
-								 root->group_pathkeys,
-								 -1.0);
+				if(distribute_remote) {
+					if (olap_optimizer && !has_cold_hot_table)
+					{
+						/* redistribute local grouping results among datanodes */
+						sort_path = create_redistribute_grouping_path(root, root->parse, sort_path);
+			
+					} else {
+						sort_path = create_remotesubplan_path(root, sort_path, NULL);
+					}
+				}
+				if (parse->groupClause && olap_optimizer && !has_cold_hot_table) {
+				
+					sort_path = (Path *)
+					create_sort_path(root,
+									group_rel,
+									sort_path,
+									root->group_pathkeys,
+									-1.0);
+									
+				}
+		
 #endif
 				final_path = (Path *)
 					create_agg_path(root,
@@ -1662,7 +1689,25 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 			if (hashaggtablesize < work_mem * 1024L)
 			{
 #ifdef XZ			
-				if(distribute_remote) partial_path = create_remotesubplan_path(root, partial_path, NULL);
+				if(distribute_remote) {
+					if (olap_optimizer && !has_cold_hot_table)
+					{
+						/* redistribute local grouping results among datanodes */
+						sort_path = create_redistribute_grouping_path(root, root->parse, sort_path);
+					} else {
+						sort_path = create_remotesubplan_path(root, sort_path, NULL);
+					}
+				}
+				if (parse->groupClause && olap_optimizer && !has_cold_hot_table) {
+				
+					sort_path = (Path *)
+					create_sort_path(root,
+									group_rel,
+									sort_path,
+									root->group_pathkeys,
+									-1.0);
+				}
+#endif			
 				final_path = (Path *)
 				create_agg_path(root,
 								group_rel,
@@ -1675,21 +1720,6 @@ try_add_final_aggregation_paths(PlannerInfo *root,
 								agg_final_costs,
 								num_groups);
 
-
-
-#else
-				final_path = (Path *)
-					create_agg_path(root,
-									group_rel,
-									partial_path,
-									target_final,
-									AGG_HASHED,
-									AGGSPLIT_SIMPLE,
-									parse->groupClause,
-									havingQuals,
-									agg_final_costs,
-									num_groups);
-#endif
 				add_path(group_rel, final_path);
 			}
 		}
