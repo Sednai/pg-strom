@@ -68,11 +68,11 @@ CREATE OR REPLACE FUNCTION pgstrom.arrow_fdw_precheck_schema()
   AS 'MODULE_PATHNAME','pgstrom_arrow_fdw_precheck_schema'
   LANGUAGE C STRICT;
 
-CREATE EVENT TRIGGER pgstrom_arrow_fdw_precheck_schema
-    ON ddl_command_end
-  WHEN tag IN ('CREATE FOREIGN TABLE',
-               'ALTER FOREIGN TABLE')
-EXECUTE PROCEDURE pgstrom.arrow_fdw_precheck_schema();
+--CREATE EVENT TRIGGER pgstrom_arrow_fdw_precheck_schema
+--    ON ddl_command_end
+--  WHEN tag IN ('CREATE FOREIGN TABLE',
+--               'ALTER FOREIGN TABLE')
+--EXECUTE PROCEDURE pgstrom.arrow_fdw_precheck_schema();
 
 CREATE OR REPLACE FUNCTION pgstrom.arrow_fdw_truncate(regclass)
   RETURNS void
