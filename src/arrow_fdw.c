@@ -5184,7 +5184,11 @@ checkArrowRecordBatchIsVisible(RecordBatchState *rbstate,
 			mvcc->key.st_ino == rbstate->stat_buf.st_ino &&
 			mvcc->record_batch == rbstate->rb_index)
 		{
+#ifdef XZ
+			if (TransactionIdDidCommit(mvcc->xid))
+#else
 			if (TransactionIdIsCurrentTransactionId(mvcc->xid))
+#endif 
 				return true;
 			else
 				return false;

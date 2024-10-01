@@ -198,7 +198,7 @@ CREATE FUNCTION pgstrom.pavg(int8,float8)
 CREATE FUNCTION pgstrom.favg_accum(int8[], int8[])
   RETURNS int8[]
   AS 'MODULE_PATHNAME', 'pgstrom_final_avg_int8_accum'
-  LANGUAGE C CALLED ON NULL INPUT PARALLEL SAFE;
+  LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.favg_final(int8[])
   RETURNS numeric
@@ -208,7 +208,7 @@ CREATE FUNCTION pgstrom.favg_final(int8[])
 CREATE FUNCTION pgstrom.favg_accum(float8[], float8[])
   RETURNS float8[]
   AS 'MODULE_PATHNAME', 'pgstrom_final_avg_float8_accum'
-  LANGUAGE C CALLED ON NULL INPUT PARALLEL SAFE;
+  LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.favg_final(float8[])
   RETURNS float8

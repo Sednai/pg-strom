@@ -1351,15 +1351,6 @@ if(IS_PGXC_COORDINATOR) {
 		if(setscan)
 		{
 			set_scanpath_distribution(root,cpath->path.parent, cpath);
-			if (cpath->path.parent->baserestrictinfo)
-			{
-				ListCell *lc;
-				foreach (lc, cpath->path.parent->baserestrictinfo)
-				{
-					RestrictInfo *ri = (RestrictInfo *) lfirst(lc);
-					restrict_distribution(root, ri, cpath);
-				}
-			}
 		}
 
 		if(num == 1) {
