@@ -1349,9 +1349,7 @@ if(IS_PGXC_COORDINATOR) {
 		contains_remotesubplan_gpu(input_path,&num,&redist,&setscan);
 
 		if(setscan)
-		{
-			set_scanpath_distribution(root,cpath->path.parent, cpath);
-		}
+			set_scanpath_distribution(root,cpath->path.parent, cpath);	
 
 		if(num == 1) {
 			distribute_remote = true;

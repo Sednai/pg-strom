@@ -454,6 +454,9 @@ cost_arrow_fdw_seqscan(Path *path,
 	QualCost	qcost;
 	double		nrows;
 	double		spc_seq_page_cost;
+#ifdef XZ
+	double		num_nodes = path_count_datanodes(path);
+#endif
 
 	if (param_info)
 		nrows = param_info->ppi_rows;
@@ -510,7 +513,11 @@ cost_arrow_fdw_seqscan(Path *path,
 	}
 	path->rows = nrows;
 	path->startup_cost = startup_cost;
+#ifdef XZ
+	path->total_cost = startup_cost + (cpu_run_cost + disk_run_cost)/num_nodes;
+#else
 	path->total_cost = startup_cost + cpu_run_cost + disk_run_cost;
+#endif
 	path->parallel_workers = num_workers;
 }
 
