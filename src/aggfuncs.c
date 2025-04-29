@@ -9,6 +9,29 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the PostgreSQL License.
  */
+
+ /*-------------------------------------------------------------------------
+ * Added small parts of 
+ *
+ * numeric.c
+ *	  An exact numeric data type for the Postgres database system
+ *
+ * Original coding 1998, Jan Wieck.  Heavily revised 2003, Tom Lane.
+ *
+ * Many of the algorithmic ideas are borrowed from David M. Smith's "FM"
+ * multiple-precision math library, most recently published as Algorithm
+ * 786: Multiple-Precision Complex Arithmetic and Functions, ACM
+ * Transactions on Mathematical Software, Vol. 24, No. 4, December 1998,
+ * pages 359-367.
+ *
+ * Copyright (c) 1998-2022, PostgreSQL Global Development Group
+ *
+ * IDENTIFICATION
+ *	  src/backend/utils/adt/numeric.c
+ *
+ *-------------------------------------------------------------------------
+ */
+
 #include "pg_strom.h"
 #include "float2.h"
 
@@ -47,8 +70,12 @@ PG_FUNCTION_INFO_V1(pgstrom_fsum_final_fp64);
 PG_FUNCTION_INFO_V1(pgstrom_fsum_final_fp64_as_numeric);
 PG_FUNCTION_INFO_V1(pgstrom_favg_final_int);
 PG_FUNCTION_INFO_V1(pgstrom_favg_final_fp);
+#ifdef AERO
+PG_FUNCTION_INFO_V1(pgstrom_favg_final_int_partialstate);
+PG_FUNCTION_INFO_V1(pgstrom_favg_final_bigint_partialstate);
+PG_FUNCTION_INFO_V1(pgstrom_favg_final_fp_partialstate);
+#endif
 PG_FUNCTION_INFO_V1(pgstrom_favg_final_num);
-
 PG_FUNCTION_INFO_V1(pgstrom_partial_variance);
 PG_FUNCTION_INFO_V1(pgstrom_stddev_trans);
 PG_FUNCTION_INFO_V1(pgstrom_stddev_samp_final);
@@ -74,6 +101,110 @@ PG_FUNCTION_INFO_V1(pgstrom_regr_slope_final);
 PG_FUNCTION_INFO_V1(pgstrom_regr_sxx_final);
 PG_FUNCTION_INFO_V1(pgstrom_regr_sxy_final);
 PG_FUNCTION_INFO_V1(pgstrom_regr_syy_final);
+
+#ifdef AERO
+#define NBASE		10000
+#define HALF_NBASE	5000
+#define DEC_DIGITS	4			/* decimal digits per NBASE digit */
+#define MUL_GUARD_DIGITS	2	/* these are measured in NBASE digits */
+#define DIV_GUARD_DIGITS	4
+typedef int16 NumericDigit;
+
+#define init_var(v)		memset(v, 0, sizeof(NumericVar))
+
+#define digitbuf_alloc(ndigits)  \
+	((NumericDigit *) palloc((ndigits) * sizeof(NumericDigit)))
+#define digitbuf_free(buf)	\
+	do { \
+		 if ((buf) != NULL) \
+			 pfree(buf); \
+	} while (0)
+
+
+typedef struct NumericVar
+{
+	int			ndigits;		/* # of digits in digits[] - can be 0! */
+	int			weight;			/* weight of first digit */
+	int			sign;			/* NUMERIC_POS, _NEG, _NAN, _PINF, or _NINF */
+	int			dscale;			/* display scale */
+	NumericDigit *buf;			/* start of palloc'd space for digits[] */
+	NumericDigit *digits;		/* base-NBASE digits */
+} NumericVar;
+
+static void
+alloc_var(NumericVar *var, int ndigits)
+{
+	digitbuf_free(var->buf);
+	var->buf = digitbuf_alloc(ndigits + 1);
+	var->buf[0] = 0;			/* spare digit for rounding */
+	var->digits = var->buf + 1;
+	var->ndigits = ndigits;
+}
+
+static void
+free_var(NumericVar *var)
+{
+	digitbuf_free(var->buf);
+	var->buf = NULL;
+	var->digits = NULL;
+	var->sign = NUMERIC_NAN;
+}
+
+static void
+numericvar_serialize(StringInfo buf, const NumericVar *var)
+{
+	int			i;
+
+	pq_sendint32(buf, var->ndigits);
+	pq_sendint32(buf, var->weight);
+	pq_sendint32(buf, var->sign);
+	pq_sendint32(buf, var->dscale);
+	for (i = 0; i < var->ndigits; i++)
+		pq_sendint16(buf, var->digits[i]);
+}
+
+static void
+int128_to_numericvar(int128 val, NumericVar *var)
+{
+	uint128		uval,
+				newuval;
+	NumericDigit *ptr;
+	int			ndigits;
+
+	/* int128 can require at most 39 decimal digits; add one for safety */
+	alloc_var(var, 40 / DEC_DIGITS);
+	if (val < 0)
+	{
+		var->sign = NUMERIC_NEG;
+		uval = -val;
+	}
+	else
+	{
+		var->sign = NUMERIC_POS;
+		uval = val;
+	}
+	var->dscale = 0;
+	if (val == 0)
+	{
+		var->ndigits = 0;
+		var->weight = 0;
+		return;
+	}
+	ptr = var->digits + var->ndigits;
+	ndigits = 0;
+	do
+	{
+		ptr--;
+		ndigits++;
+		newuval = uval / NBASE;
+		*ptr = uval - newuval * NBASE;
+		uval = newuval;
+	} while (uval);
+	var->digits = ptr;
+	var->ndigits = ndigits;
+	var->weight = ndigits - 1;
+}
+#endif
 
 /*
  * float8 validator
@@ -461,6 +592,59 @@ pgstrom_favg_final_int(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(DirectFunctionCall2(numeric_div, sum, n));
 }
 
+#ifdef AERO
+PUBLIC_FUNCTION(Datum)
+pgstrom_favg_final_int_partialstate(PG_FUNCTION_ARGS)
+{
+	kagg_state__psum_int_packed *state;
+	
+	state = (kagg_state__psum_int_packed *)PG_GETARG_BYTEA_P(0);
+	
+	Datum		transdatums[2];
+	ArrayType  *result;
+
+	transdatums[0] = (int64) state->nitems;
+	transdatums[1] = state->sum;
+	
+	result = construct_array(transdatums, 2,
+		INT8OID,
+		sizeof(int64), true, TYPALIGN_DOUBLE);
+
+	PG_RETURN_ARRAYTYPE_P(result);
+}
+
+// Note: Only works on platforms with int128 support
+PUBLIC_FUNCTION(Datum)
+pgstrom_favg_final_bigint_partialstate(PG_FUNCTION_ARGS)
+{
+	kagg_state__psum_int_packed *state;
+	
+	state = (kagg_state__psum_int_packed *)PG_GETARG_BYTEA_P(0);
+	
+	StringInfoData buf;
+	bytea	   *result;
+	NumericVar	tmp_var;
+	
+	init_var(&tmp_var);
+
+	pq_begintypsend(&buf);
+
+	/* N */
+	pq_sendint64(&buf, (int64) state->nitems);
+
+	/* sumX */
+	int128_to_numericvar(state->sum, &tmp_var);
+
+	numericvar_serialize(&buf, &tmp_var);
+
+	result = pq_endtypsend(&buf);
+
+	free_var(&tmp_var);
+
+	PG_RETURN_BYTEA_P(result);
+}
+#endif
+
 PUBLIC_FUNCTION(Datum)
 pgstrom_favg_final_fp(PG_FUNCTION_ARGS)
 {
@@ -471,6 +655,28 @@ pgstrom_favg_final_fp(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 	PG_RETURN_FLOAT8((double)state->sum / (double)state->nitems);
 }
+
+#ifdef AERO
+PUBLIC_FUNCTION(Datum)
+pgstrom_favg_final_fp_partialstate(PG_FUNCTION_ARGS)
+{
+	kagg_state__psum_fp_packed *state
+		= (kagg_state__psum_fp_packed *)PG_GETARG_BYTEA_P(0);
+
+	Datum		transdatums[3];
+	ArrayType  *result;
+
+	transdatums[0] = state->nitems;
+	transdatums[1] = state->sum;
+	transdatums[2] = 0;
+
+	result = construct_array(transdatums, 3,
+								FLOAT8OID,
+								sizeof(float8), FLOAT8PASSBYVAL, TYPALIGN_DOUBLE);
+	
+	PG_RETURN_ARRAYTYPE_P(result);
+}
+#endif
 
 PUBLIC_FUNCTION(Datum)
 pgstrom_favg_final_num(PG_FUNCTION_ARGS)

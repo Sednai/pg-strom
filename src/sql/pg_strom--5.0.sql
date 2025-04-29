@@ -3038,6 +3038,23 @@ CREATE FUNCTION pgstrom.favg_final_fp(bytea)
   AS 'MODULE_PATHNAME','pgstrom_favg_final_fp'
   LANGUAGE C STRICT PARALLEL SAFE;
 
+-- AERO BEGIN
+CREATE FUNCTION pgstrom.favg_final_fp_partialstate(bytea)
+  RETURNS float8[]
+  AS 'MODULE_PATHNAME','pgstrom_favg_final_fp_partialstate'
+  LANGUAGE C STRICT PARALLEL SAFE;
+
+CREATE FUNCTION pgstrom.favg_final_int_partialstate(bytea)
+  RETURNS int8[]
+  AS 'MODULE_PATHNAME','pgstrom_favg_final_int_partialstate'
+  LANGUAGE C STRICT PARALLEL SAFE;
+  
+CREATE FUNCTION pgstrom.favg_final_bigint_partialstate(bytea)
+  RETURNS bytea
+  AS 'MODULE_PATHNAME','pgstrom_favg_final_bigint_partialstate'
+  LANGUAGE C STRICT PARALLEL SAFE;
+-- AERO END
+
 CREATE FUNCTION pgstrom.favg_final_num(bytea)
   RETURNS numeric
   AS 'MODULE_PATHNAME','pgstrom_favg_final_num'
@@ -3058,6 +3075,32 @@ CREATE AGGREGATE pgstrom.avg_fp(bytea)
   finalfunc = pgstrom.favg_final_fp,
   parallel = safe
 );
+
+-- AERO BEGIN
+CREATE AGGREGATE pgstrom.avg_int_ps(bytea)
+(
+  sfunc = pgstrom.favg_trans_int,
+  stype = bytea,
+  finalfunc = pgstrom.favg_final_int_partialstate,
+  parallel = safe
+);
+
+CREATE AGGREGATE pgstrom.avg_bigint_ps(bytea)
+(
+  sfunc = pgstrom.favg_trans_int,
+  stype = bytea,
+  finalfunc = pgstrom.favg_final_bigint_partialstate,
+  parallel = safe
+);
+
+CREATE AGGREGATE pgstrom.avg_fp_ps(bytea)
+(
+  sfunc = pgstrom.favg_trans_fp,
+  stype = bytea,
+  finalfunc = pgstrom.favg_final_fp_partialstate,
+  parallel = safe
+);
+-- AERO END
 
 CREATE AGGREGATE pgstrom.avg_num(bytea)
 (

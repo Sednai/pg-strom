@@ -571,7 +571,11 @@ XpuScanAddScanPath(PlannerInfo *root,
 	if (set_rel_pathlist_next)
 		set_rel_pathlist_next(root, baserel, rtindex, rte);
 
+#ifdef AERO
+	if (pgstrom_enabled() && IS_PGXC_DATANODE)
+#else
 	if (pgstrom_enabled())
+#endif
 	{
 		if (enable_gpuscan && gpuserv_ready_accept())
 			__xpuScanAddScanPathCommon(root, baserel, rtindex, rte,

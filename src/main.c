@@ -10,7 +10,9 @@
  * it under the terms of the PostgreSQL License.
  */
 #include "pg_strom.h"
-
+#ifdef AERO
+#include "optimizer/pgxcplan.h"
+#endif
 PG_MODULE_MAGIC;
 
 /* misc variables */
@@ -699,6 +701,11 @@ _PG_init(void)
 	pgstrom_dummy_plan_methods.CreateCustomScanState = pgstrom_dummy_create_scan_state;
 
 	/* post planner hook */
+#ifdef AERO
+	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+		planner_hook_next = (planner_hook ? planner_hook : pgxc_planner);
+	else
+#endif
 	planner_hook_next = (planner_hook ? planner_hook : standard_planner);
 	planner_hook = pgstrom_post_planner;
 	/* signal handler for wake up */
