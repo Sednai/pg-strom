@@ -12,25 +12,6 @@
 #include "xpu_common.h"
 #include <math.h>
 
-INLINE_FUNCTION(bool)
-xpu_numeric_validate(kern_context *kcxt, xpu_numeric_t *num)
-{
-	if (num->kind == XPU_NUMERIC_KIND__VARLENA)
-	{
-		const varlena  *vl_addr = num->u.vl_addr;
-		const char	   *errmsg;
-
-		errmsg = __xpu_numeric_from_varlena(num, vl_addr);
-		if (errmsg)
-		{
-			STROM_ELOG(kcxt, errmsg);
-			return false;
-		}
-		assert(num->kind != XPU_NUMERIC_KIND__VARLENA);
-	}
-	return true;
-}
-
 INLINE_FUNCTION(int)
 xpu_numeric_sign(xpu_numeric_t *num)
 {
@@ -86,11 +67,17 @@ xpu_numeric_datum_arrow_read(kern_context *kcxt,
 	addr = (const int128_t *)KDS_ARROW_REF_SIMPLE_DATUM(kds, cmeta,
 														kds_index,
 														sizeof(int128_t));
-	if (addr)
-		set_normalized_numeric(result, *addr,
-							   cmeta->attopts.decimal.scale);
-	else
+	if (!addr)
 		result->expr_ops = NULL;
+	else
+	{
+		result->expr_ops = &xpu_numeric_ops;
+		result->kind = XPU_NUMERIC_KIND__VALID;
+		result->weight = cmeta->attopts.decimal.scale;
+		result->u.value = *addr;
+		__xpu_numeric_normalize(&result->weight,
+								&result->u.value);
+	}
 	return true;
 }
 
@@ -151,9 +138,9 @@ xpu_numeric_datum_kvec_copy(kern_context *kcxt,
 {
 	const kvec_numeric_t *kvecs_src = (const kvec_numeric_t *)__kvecs_src;
 	kvec_numeric_t *kvecs_dst = (kvec_numeric_t *)__kvecs_dst;
-	uint8_t		kind;
+	uint8_t		kind = kvecs_src->kinds[kvecs_src_id];;
 
-	kvecs_dst->kinds[kvecs_dst_id] = kind = kvecs_src->kinds[kvecs_src_id];
+	kvecs_dst->kinds[kvecs_dst_id] = kind;
 	if (kind == XPU_NUMERIC_KIND__VARLENA)
 	{
 		kvecs_dst->values_lo[kvecs_dst_id].ptr = kvecs_src->values_lo[kvecs_src_id].ptr;
@@ -244,6 +231,28 @@ xpu_numeric_datum_comp(kern_context *kcxt,
 	return true;
 }
 PGSTROM_SQLTYPE_OPERATORS(numeric, false, 4, -1);
+
+INLINE_FUNCTION(void)
+set_normalized_numeric(xpu_numeric_t *result, int128_t value, int16_t weight)
+{
+	__xpu_numeric_normalize(&weight, &value);
+	result->expr_ops = &xpu_numeric_ops;
+	result->kind     = XPU_NUMERIC_KIND__VALID;
+	result->weight   = weight;
+	result->u.value  = value;
+}
+
+PUBLIC_FUNCTION(const char *)
+xpu_numeric_from_varlena(xpu_numeric_t *result, const varlena *addr)
+{
+	const char *emsg = __xpu_numeric_from_varlena(&result->kind,
+												  &result->weight,
+												  &result->u.value,
+												  addr);
+	if (!emsg)
+		result->expr_ops = &xpu_numeric_ops;
+	return emsg;
+}
 
 PUBLIC_FUNCTION(bool)
 __xpu_numeric_to_int64(kern_context *kcxt,
@@ -423,7 +432,11 @@ PG_NUMERIC_TO_FLOAT_TEMPLATE(float8, __to_fp64)
 		else														\
 		{															\
 			result->expr_ops = &xpu_numeric_ops;					\
-			set_normalized_numeric(result, ival.value, 0);			\
+			result->kind = XPU_NUMERIC_KIND__VALID;					\
+			result->weight = 0;										\
+			result->u.value = ival.value;							\
+			__xpu_numeric_normalize(&result->weight,				\
+									&result->u.value);				\
 		}															\
 		return true;												\
 	}
@@ -447,8 +460,11 @@ pgfn_money_to_numeric(XPU_PGFUNCTION_ARGS)
 			fpoint = 2;
 
 		result->expr_ops = &xpu_numeric_ops;
-		set_normalized_numeric(result, ival.value, 0);
-		result->weight += fpoint;
+		result->kind = XPU_NUMERIC_KIND__VALID;
+		result->weight = fpoint;
+		result->u.value = ival.value;
+		__xpu_numeric_normalize(&result->weight,
+								&result->u.value);
 	}
 	return true;
 }
@@ -1037,12 +1053,16 @@ pgfn_numeric_uminus(XPU_PGFUNCTION_ARGS)
 
 	if (!EXEC_KERN_EXPRESSION(kcxt, karg, __result))
 		return false;
-	if (!xpu_numeric_validate(kcxt, result))
-		return false;
 	if (!XPU_DATUM_ISNULL(result))
 	{
+		if (!xpu_numeric_validate(kcxt, result))
+			return false;
 		if (result->kind == XPU_NUMERIC_KIND__VALID)
 			result->u.value = -result->u.value;
+		else if (result->kind == XPU_NUMERIC_KIND__POS_INF)
+			result->kind = XPU_NUMERIC_KIND__NEG_INF;
+		else if (result->kind == XPU_NUMERIC_KIND__NEG_INF)
+			result->kind = XPU_NUMERIC_KIND__POS_INF;
 	}
 	return true;
 }
@@ -1057,13 +1077,15 @@ pgfn_numeric_abs(XPU_PGFUNCTION_ARGS)
 		   KEXP_IS_VALID(karg, numeric));
 	if (!EXEC_KERN_EXPRESSION(kcxt, karg, result))
 		return false;
-	if (!xpu_numeric_validate(kcxt, result))
-		return false;
 	if (!XPU_DATUM_ISNULL(result))
 	{
+		if (!xpu_numeric_validate(kcxt, result))
+			return false;
 		if (result->kind == XPU_NUMERIC_KIND__VALID &&
 			result->u.value < 0)
 			result->u.value = -result->u.value;
+		else if (result->kind == XPU_NUMERIC_KIND__NEG_INF)
+			result->kind = XPU_NUMERIC_KIND__POS_INF;
 	}
 	return true;
 }
@@ -1207,4 +1229,175 @@ pg_numeric_to_cstring(kern_context *kcxt,
 		}
 	}
 	return (int)(cp - buf);
+}
+
+/*
+ * Devcast function text -> numeric
+ */
+STATIC_FUNCTION(bool)
+__strtonum(const char *str, int len, xpu_numeric_t *result)
+{
+	const char *pos;
+	int128_t	ival = 0;
+	int			weight = 0;
+	char		sign = '+';
+	bool		meet_period = false;
+
+	/* zero clear the result */
+	memset(result, 0, sizeof(xpu_numeric_t));
+	/* skip leading whitespace */
+	while (len > 0 && __isspace(*str))
+	{
+		str++;
+		len--;
+	}
+	if (len == 0)
+		return false;
+	pos = str;
+	/* sign (optional) */
+	if (*pos == '+' || *pos == '-')
+	{
+		sign = *pos;
+		pos++;
+		len--;
+	}
+	/* decimal */
+	while (len > 0)
+	{
+		int		c = *pos;
+
+		if (c == '.' && !meet_period)
+			meet_period = true;
+		else if (__isdigit(c))
+		{
+			ival = 10 * ival + (c - '0');
+			if (meet_period)
+				weight++;
+		}
+		else
+			break;
+		pos++;
+		len--;
+	}
+	/* exponential */
+	if (len > 0 && (*pos == 'e' || *pos == 'E'))
+	{
+		int		expo = 0;
+		char	expo_sign = '+';
+
+		pos++;
+		len--;
+		if (len == 0)
+			goto not_finite;
+		if (*pos == '+' || *pos == '-')
+		{
+			expo_sign = *pos;
+			pos++;
+			len--;
+		}
+		while (len > 0)
+		{
+			int		c = *pos;
+
+			if (!__isdigit(c))
+				break;
+			expo = 10 * expo + (c - '0');
+			pos++;
+			len--;
+		}
+		if (expo_sign == '+')
+			weight += expo_sign;
+		else
+			weight -= expo_sign;
+	}
+	/* skip tailing whitespace */
+	while (len > 0 && __isspace(*pos))
+	{
+		pos++;
+		len--;
+	}
+	/* len == 0 if finite numeric value */
+	if (len == 0)
+	{
+		result->expr_ops = &xpu_numeric_ops;
+		result->kind = XPU_NUMERIC_KIND__VALID;
+		result->weight = weight;
+		result->u.value = (sign == '+' ? ival : -ival);
+		return true;
+	}
+not_finite:
+	assert(pos >= str);
+	len += (pos - str);
+	if (len >= 3 && __strncasecmp(str, "NaN", 3) == 0)
+	{
+		result->kind = XPU_NUMERIC_KIND__NAN;
+		str += 3;
+		len -= 3;
+	}
+	else if (len >= 8 && __strncasecmp(str, "Infinity", 8) == 0)
+	{
+		result->kind = XPU_NUMERIC_KIND__POS_INF;
+		str += 8;
+		len -= 8;
+	}
+	else if (len >= 9 && __strncasecmp(str, "+Infinity", 9) == 0)
+	{
+		result->kind = XPU_NUMERIC_KIND__POS_INF;
+		str += 9;
+		len -= 9;
+	}
+	else if (len >= 9 && __strncasecmp(str, "-Infinity", 9) == 0)
+	{
+		result->kind = XPU_NUMERIC_KIND__NEG_INF;
+		str += 9;
+		len -= 9;
+	}
+	else if (len >= 3 && __strncasecmp(str, "inf", 3) == 0)
+	{
+		result->kind = XPU_NUMERIC_KIND__POS_INF;
+		str += 3;
+		len -= 3;
+	}
+	else if (len >= 4 && __strncasecmp(str, "+inf", 4) == 0)
+	{
+		result->kind = XPU_NUMERIC_KIND__NEG_INF;
+		str += 4;
+		len -= 4;
+	}
+	else if (len >= 4 && __strncasecmp(str, "-inf", 4) == 0)
+	{
+		result->kind = XPU_NUMERIC_KIND__NEG_INF;
+		str += 4;
+		len -= 4;
+	}
+	/* skip tailing whitespace */
+	while (len > 0 && __isspace(*str))
+	{
+		str++;
+		len--;
+	}
+	if (len == 0)
+	{
+		result->expr_ops = &xpu_numeric_ops;
+		return true;
+	}
+	return false;
+}
+
+PUBLIC_FUNCTION(bool)
+pgfn_devcast_text_to_numeric(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS1(numeric,text,arg);
+
+	if (XPU_DATUM_ISNULL(&arg))
+		result->expr_ops = NULL;
+	else if (!xpu_text_is_valid(kcxt, &arg))
+		return false;
+	else if (!__strtonum(arg.value,
+						 arg.length, result))
+	{
+		STROM_ELOG(kcxt, "invalid input for numeric");
+		return false;
+	}
+	return true;
 }

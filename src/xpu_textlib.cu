@@ -721,7 +721,7 @@ pgfn_textlen(XPU_PGFUNCTION_ARGS)
 		}
 		else
 		{
-			STROM_ELOG(kcxt, "unable to count compressed/external text under multi-bytes encoding");
+			SUSPEND_FALLBACK(kcxt, "unable to count compressed/external text under multi-bytes encoding");
 			return false;
 		}
 		result->value = len;
@@ -848,7 +848,7 @@ pg_gb18030_mblen(const char *s)
 #define DATABASE_SB_ENCODE(NAME)					{ #NAME, 1, pg_latin_mblen }
 #define DATABASE_MB_ENCODE(NAME,MAXLEN,FN_MBLEN)	{ #NAME, MAXLEN, FN_MBLEN }
 
-PUBLIC_DATA	xpu_encode_info	xpu_encode_catalog[] = {
+PUBLIC_DATA(xpu_encode_info, xpu_encode_catalog[]) = {
 	DATABASE_SB_ENCODE(SQL_ASCII),
 	DATABASE_MB_ENCODE(EUC_JP, 3, pg_euc_mblen),
 	DATABASE_MB_ENCODE(EUC_CN, 2, pg_euc_cn_mblen),
@@ -915,8 +915,7 @@ PUBLIC_DATA	xpu_encode_info	xpu_encode_catalog[] = {
 	STATIC_FUNCTION(int)												\
 	FUNCNAME(kern_context *kcxt,										\
 			 const char *t, int tlen,									\
-			 const char *p, int plen,									\
-			 int depth)													\
+			 const char *p, int plen)									\
 	{																	\
 		xpu_encode_info	   *encode = SESSION_ENCODE(kcxt->session);		\
 																		\
@@ -924,9 +923,9 @@ PUBLIC_DATA	xpu_encode_info	xpu_encode_catalog[] = {
 		if (plen == 1 && *p == '%')										\
 			return LIKE_TRUE;											\
 		/* this function is recursive */								\
-		if (depth > 10)													\
+		if (CHECK_CUDA_STACK_OVERFLOW())								\
 		{																\
-			STROM_ELOG(kcxt, "like recursion too deep");				\
+			SUSPEND_FALLBACK(kcxt, #FUNCNAME ": recursion too deep");	\
 			return LIKE_EXCEPTION;										\
 		}																\
 		/*																\
@@ -1027,8 +1026,7 @@ PUBLIC_DATA	xpu_encode_info	xpu_encode_catalog[] = {
 					{													\
 						int		matched = FUNCNAME(kcxt,				\
 												   t, tlen,				\
-												   p, plen,				\
-												   depth+1);			\
+												   p, plen);			\
 						if (matched != LIKE_FALSE)						\
 							return matched; /* TRUE or ABORT */			\
 					}													\
@@ -1108,7 +1106,7 @@ GENERIC_MATCH_TEXT_TEMPLATE(GenericCaseMatchText, GetCharUpper)
 				return false;											\
 			status = FN_MATCH(kcxt,										\
 							  datum_a.value, datum_a.length,			\
-							  datum_b.value, datum_b.length, 0);		\
+							  datum_b.value, datum_b.length);			\
 			if (status == LIKE_EXCEPTION)								\
 				return false;											\
 			result->value = (status OPER LIKE_TRUE);					\
@@ -1142,7 +1140,7 @@ PG_TEXTLIKE_TEMPLATE(texticnlike, GenericCaseMatchText, !=)
 				return false;											\
 			status = FN_MATCH(kcxt,										\
 							  datum_a.value, datum_a.length,			\
-							  datum_b.value, datum_b.length, 0);		\
+							  datum_b.value, datum_b.length);			\
 			if (status == LIKE_EXCEPTION)								\
 				return false;											\
 			result->value = (status OPER LIKE_TRUE);					\
@@ -1318,4 +1316,108 @@ PUBLIC_FUNCTION(bool)
 pgfn_substr_nolen(XPU_PGFUNCTION_ARGS)
 {
 	return pgfn_substring_nolen(kcxt, kexp, __result);
+}
+
+/*
+ * Functions related to vcf2arrow
+ */
+STATIC_FUNCTION(void)
+__fetch_token_by_delim(kern_context *kcxt,
+					   xpu_text_t *result,
+					   const char *str, int strlen,
+					   const char *key, int keylen, char delim)
+{
+	const char *end, *pos, *base;
+
+	/*
+	 * triming whitespaces of the key head/tail
+	 */
+	while (keylen > 0 && __isspace(*key))
+	{
+		key++;
+		keylen--;
+	}
+	if (keylen == 0)
+		goto out;
+	while (keylen > 0 && __isspace(key[keylen-1]))
+		keylen--;
+	if (keylen == 0)
+		goto out;
+	/*
+	 * split a token by the delimiter for each
+	 */
+	if (strlen == 0)
+		goto out;
+	end = str + strlen - 1;
+	pos = base = str;
+	while (pos <= end)
+	{
+		if (*pos == delim || pos == end)
+		{
+			if (pos - base >= keylen && __strncmp(base, key, keylen) == 0)
+			{
+				const char *__k = (base + keylen);
+
+				while (__isspace(*__k) && __k < pos)
+					__k++;
+				if (__k < pos && *__k == '=')
+				{
+					result->expr_ops = &xpu_text_ops;
+					result->value = ++__k;
+					result->length = (pos - __k);
+					return;
+				}
+			}
+			base = pos + 1;
+		}
+		else if (pos == base && __isspace(*pos))
+		{
+			base++;
+		}
+		pos++;
+	}
+out:
+	result->expr_ops = NULL;
+}
+
+PUBLIC_FUNCTION(bool)
+pgfn_vcf_variant_getattr(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS2(text, text, str, text, key);
+
+	if (XPU_DATUM_ISNULL(&str) || XPU_DATUM_ISNULL(&key))
+		result->expr_ops = NULL;
+	else if (!xpu_text_is_valid(kcxt, &str) ||
+			 !xpu_text_is_valid(kcxt, &key))
+		return false;	/* compressed or external */
+	else
+		__fetch_token_by_delim(kcxt,
+							   result,
+							   str.value,
+							   str.length,
+							   key.value,
+							   key.length,
+							   ':');
+	return true;
+}
+
+PUBLIC_FUNCTION(bool)
+pgfn_vcf_info_getattr(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS2(text, text, str, text, key);
+
+	if (XPU_DATUM_ISNULL(&str) || XPU_DATUM_ISNULL(&key))
+		result->expr_ops = NULL;
+	else if (!xpu_text_is_valid(kcxt, &str) ||
+			 !xpu_text_is_valid(kcxt, &key))
+		return false;	/* compressed or external */
+	else
+		__fetch_token_by_delim(kcxt,
+							   result,
+							   str.value,
+							   str.length,
+							   key.value,
+							   key.length,
+							   ';');
+	return true;
 }

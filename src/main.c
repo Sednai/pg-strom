@@ -20,6 +20,7 @@ static Oid	__pgstrom_namespace_oid = UINT_MAX;
 static bool	__pgstrom_enabled_guc = true;			/* GUC */
 int			pgstrom_cpu_fallback_elevel = NOTICE;	/* GUC */
 bool		pgstrom_regression_test_mode = false;	/* GUC */
+bool		pgstrom_explain_developer_mode = false;	/* GUC */
 long		PAGE_SIZE;
 long		PAGE_MASK;
 int			PAGE_SHIFT;
@@ -126,6 +127,15 @@ pgstrom_init_gucs(void)
 							 PGC_USERSET,
 							 GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
 							 NULL, NULL, NULL);
+	/* turns on/off developer-level detailed EXPLAIN output */
+	DefineCustomBoolVariable("pg_strom.explain_developer_mode",
+							 "Turns on/off some detailed internal information in EXPLAIN",
+							 NULL,
+							 &pgstrom_explain_developer_mode,
+							 false,
+							 PGC_USERSET,
+							 GUC_NOT_IN_SAMPLE,
+							 NULL, NULL, NULL);
 }
 
 /* --------------------------------------------------------------------------------
@@ -133,6 +143,18 @@ pgstrom_init_gucs(void)
  * add/remove dummy plan node
  *
  * -------------------------------------------------------------------------------- */
+bool
+pgstrom_is_dummy_path(const Path *path)
+{
+	if (IsA(path, CustomPath))
+	{
+		const CustomPath *cpath = (const CustomPath *)path;
+
+		return (cpath->methods == &pgstrom_dummy_path_methods);
+	}
+	return false;
+}
+
 Path *
 pgstrom_create_dummy_path(PlannerInfo *root, Path *subpath)
 {
@@ -144,7 +166,9 @@ pgstrom_create_dummy_path(PlannerInfo *root, Path *subpath)
 
 	/* sanity checks */
 	if (list_length(upper_target->exprs) != list_length(sub_target->exprs))
-		elog(ERROR, "CustomScan(dummy): incompatible tlist is supplied");
+		elog(ERROR, "CustomScan(dummy): incompatible tlist is supplied\n%s\n%s",
+			 nodeToString(upper_target->exprs),
+			 nodeToString(sub_target->exprs));
 	forboth (lc1, upper_target->exprs,
 			 lc2, sub_target->exprs)
 	{
@@ -688,7 +712,6 @@ _PG_init(void)
 		pgstrom_init_dpu_join();
 		pgstrom_init_dpu_preagg();
 	}
-	pgstrom_init_pcie();
 	/* callback for the extension checker */
 	CacheRegisterSyscacheCallback(NAMESPACEOID, pgstrom_extension_checker_callback, 0);
 	/* dummy custom-scan node */

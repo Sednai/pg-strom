@@ -52,4 +52,45 @@
 	build_child_join_rel((a),(b),(c),(d),(e),(f),(f)->jointype)
 #endif
 
+/*
+ * MEMO: PostgreSQL v16 removed 'IsBackgroundWorker' variable, and
+ * AmBackgroundWorkerProcess() is used instead.
+ */
+#if PG_VERSION_NUM < 170000
+#define AmBackgroundWorkerProcess()		(IsBackgroundWorker)
+#endif
+
+/*
+ * MEMO: PostgreSQL v16 defined function pointer type for expression
+ * tree walker/mutator
+ */
+#if PG_VERSION_NUM < 160000
+typedef bool (*tree_walker_callback) (Node *node, void *context);
+typedef Node *(*tree_mutator_callback) (Node *node, void *context);
+#endif
+
+/*
+ * MEMO: PostgreSQL v17 removed 'snapshot' argument from the
+ * brinRevmapInitialize().
+ */
+#if PG_VERSION_NUM < 170000
+#define brinRevmapInitialize(a,b)				\
+	brinRevmapInitialize((a),(b), estate->es_snapshot)
+#define brinGetTupleForHeapBlock(a,b,c,d,e,f)	\
+	brinGetTupleForHeapBlock((a),(b),(c),(d),(e),(f), estate->es_snapshot)
+#endif
+
+/*
+ * MEMO: PostgreSQL v17 adds 'runCondition' to the create_windowagg_path().
+ * It had been attached from WindowClause later on the Path -> Plan
+ * tranformation phase. (So, WindowAggPath does not have 'runCondition').
+ */
+#if PG_VERSION_NUM < 170000
+#define create_windowagg_path(a,b,c,d,e,f,g,h,i)	\
+	create_windowagg_path((a),(b),(c),(d),(e),(g),(h),(i))
+#define __windowAggPathGetRunCondition(wpath)	((wpath)->winclause->runCondition)
+#else
+#define __windowAggPathGetRunCondition(wpath)	((wpath)->runCondition)
+#endif
+
 #endif	/* PG_COMPAT_H */

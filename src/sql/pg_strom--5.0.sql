@@ -3,6 +3,17 @@
 --
 CREATE SCHEMA IF NOT EXISTS pgstrom;
 
+--
+-- MEMO: Some DDL command may internally create a pseudo object
+-- to avoid dependency problems, but does not allow to qualify
+-- the referenced object by namespace.
+-- For example, CREATE OPERATOR '=' can take a negator operator '<>'
+-- before the creation of the '<>', and internally creates the '<>'
+-- operator in the default namespace but it is not an intended
+-- behavior. So, we switch the default namespace to pg_catalog here.
+--
+SET search_path = 'pg_catalog';
+
 -- ================================================================
 --
 -- PG-Strom System Functions, Views and others
@@ -2964,7 +2975,7 @@ CREATE AGGREGATE pgstrom.sum_int(bytea)
   finalfunc = pgstrom.fsum_final_int,
   parallel = safe
 );
--- SUM(int8) --> numeric
+-- SUM(int8) --> numeric (DEPRECATED))
 CREATE AGGREGATE pgstrom.sum_int_num(bytea)
 (
   sfunc = pgstrom.fsum_trans_int,
@@ -3267,47 +3278,47 @@ CREATE AGGREGATE pgstrom.covar_pop(bytea)
 );
 
 CREATE FUNCTION pgstrom.regr_avgx_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_avgx_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.regr_avgy_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_avgy_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.regr_count_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_count_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.regr_intercept_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_intercept_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.regr_r2_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_r2_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.regr_slope_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_slope_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.regr_sxx_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_sxx_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.regr_sxy_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_sxy_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
 CREATE FUNCTION pgstrom.regr_syy_final(bytea)
-  RETURNS bytea
+  RETURNS float8
   AS 'MODULE_PATHNAME','pgstrom_regr_syy_final'
   LANGUAGE C STRICT PARALLEL SAFE;
 
@@ -3505,3 +3516,8 @@ CREATE FUNCTION pgstrom.random_daterange(float=0.0,
   RETURNS daterange
   AS 'MODULE_PATHNAME','pgstrom_random_daterange'
   LANGUAGE C CALLED ON NULL INPUT;
+
+--
+-- Reset GUC parameters
+--
+RESET search_path;

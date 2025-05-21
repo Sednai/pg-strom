@@ -23,7 +23,8 @@ static bool					pgstrom_enable_gpujoin = false;		/* GUC */
 static bool					pgstrom_enable_gpuhashjoin = false;	/* GUC */
 static bool					pgstrom_enable_gpugistindex = false;/* GUC */
 static bool					pgstrom_enable_partitionwise_gpujoin = false;
-
+static int					__pinned_inner_buffer_threshold_mb = 0; /* GUC */
+static int					__pinned_inner_buffer_partition_size_mb = 0; /* GUC */
 static CustomPathMethods	dpujoin_path_methods;
 static CustomScanMethods	dpujoin_plan_methods;
 static CustomExecMethods	dpujoin_exec_methods;
@@ -119,6 +120,54 @@ DEBUG_XpuJoinPathPrint(PlannerInfo *root,
 }
 
 /*
+ * pgstrom_is_gpujoin_path
+ */
+bool
+pgstrom_is_gpujoin_path(const Path *path)
+{
+	if (IsA(path, CustomPath))
+	{
+		const CustomPath *cpath = (const CustomPath *)path;
+
+		if (cpath->methods == &gpujoin_path_methods)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * pgstrom_is_gpujoin_plan
+ */
+bool
+pgstrom_is_gpujoin_plan(const Plan *plan)
+{
+	if (IsA(plan, CustomScan))
+	{
+		const CustomScan *cscan = (const CustomScan *)plan;
+
+		if (cscan->methods == &gpujoin_plan_methods)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * pgstrom_is_gpujoin_state
+ */
+bool
+pgstrom_is_gpujoin_state(const PlanState *ps)
+{
+	if (IsA(ps, CustomScanState))
+	{
+		const CustomScanState *css = (const CustomScanState *)ps;
+
+		if (css->methods == &gpujoin_exec_methods)
+			return true;
+	}
+	return false;
+}
+
+/*
  * try_fetch_xpujoin_planinfo
  */
 pgstromPlanInfo *
@@ -132,6 +181,167 @@ try_fetch_xpujoin_planinfo(const Path *path)
 		return (pgstromPlanInfo *)linitial(cpath->custom_private);
 	return NULL;
 }
+
+/*
+ * tryPinnedInnerJoinBufferPath
+ */
+static Path *
+tryPinnedInnerJoinBufferPath(pgstromPlanInfo *pp_info,
+							 pgstromPlanInnerInfo *pp_inner,
+							 Path *inner_path,
+							 Cost *p_inner_final_cost)
+{
+	PathTarget *inner_target;
+	size_t		inner_threshold_sz;
+	int			nattrs;
+	int			unitsz;
+	int			projection_hash_divisor = 0;
+	double		bufsz;
+
+	/*
+	 * should not have RIGHT/FULL OUTER JOIN before pinned inner buffer
+	 * (including the current-depth itself)
+	 */
+	for (int j=0; j < pp_info->num_rels; j++)
+	{
+		pgstromPlanInnerInfo *__pp_inner = &pp_info->inners[j];
+
+		if (__pp_inner->join_type == JOIN_RIGHT ||
+			__pp_inner->join_type == JOIN_FULL)
+			return NULL;
+		Assert(__pp_inner->join_type == JOIN_INNER ||
+			   __pp_inner->join_type == JOIN_LEFT);
+	}
+	/*
+	 * GiST-index buffer must be built by CPU
+	 */
+	if (OidIsValid(pp_inner->gist_index_oid))
+		return NULL;
+	/*
+	 * Check expected pinned inner buffer size
+	 */
+	if (__pinned_inner_buffer_threshold_mb <= 0)
+		return NULL;
+	inner_threshold_sz = (size_t)__pinned_inner_buffer_threshold_mb << 20;
+
+	inner_target = (inner_path->pathtarget
+					? inner_path->pathtarget
+					: inner_path->parent->reltarget);
+	nattrs = list_length(inner_target->exprs);
+	unitsz = ((pp_inner->hash_inner_keys != NIL
+			   ? offsetof(kern_hashitem, t.htup)
+			   : offsetof(kern_tupitem, htup)) +
+			  MAXALIGN(offsetof(HeapTupleHeaderData,
+								t_bits) + BITMAPLEN(nattrs)) +
+			  MAXALIGN(inner_target->width));
+	bufsz = MAXALIGN(offsetof(kern_data_store, colmeta[nattrs]));
+	if (pp_inner->hash_inner_keys != NIL)
+		bufsz += sizeof(uint64_t) * Max(inner_path->rows, 320.0);
+	bufsz += sizeof(uint64_t) * inner_path->rows;
+	bufsz += unitsz * inner_path->rows;
+
+	if (bufsz < inner_threshold_sz)
+		return NULL;
+	/* Ok, this inner path can use pinned-buffer */
+	if (pgstrom_is_gpuscan_path(inner_path) ||
+		pgstrom_is_gpujoin_path(inner_path))
+	{
+		CustomPath *cpath = (CustomPath *)pgstrom_copy_pathnode(inner_path);
+		pgstromPlanInfo *pp_temp = linitial(cpath->custom_private);
+
+		pp_temp = copy_pgstrom_plan_info(pp_temp);
+		pp_temp->projection_hashkeys = pp_inner->hash_inner_keys;
+		cpath->custom_private = list_make1(pp_temp);
+
+		/* turn on inner_pinned_buffer */
+		pp_inner->inner_pinned_buffer = true;
+		pp_inner->inner_partitions_divisor = projection_hash_divisor;
+
+		*p_inner_final_cost = pp_temp->final_cost;
+		return (Path *)cpath;
+	}
+#if 0
+	else if (IsA(inner_path, Path) &&
+			 inner_path->pathtype == T_SeqScan &&
+			 inner_path->pathkeys == NIL)
+	{
+		//TODO: Try to replace a simple SeqScan to GpuScan if possible
+	}
+#endif
+	return NULL;
+}
+
+/*
+ * fixup_join_varnullingrels
+ *
+ * MEMO: PG16 added the Var::varnullingrels field to track potentially
+ * NULL-able columns for OUTER JOINs. It it setup by the core optimizer
+ * for each joinrel, so expression pulled-up from the prior level join
+ * or scan must be adjusted as if Var-nodes are used in this Join.
+ * Without this fixup, setrefs.c shall raise an error due to mismatch
+ * of equal() that checks varnullingrels field also.
+ */
+#if PG_VERSION_NUM < 160000
+#define fixup_join_varnullingrels(joinrel,pp_info)		(pp_info)
+#else
+static Node *
+__fixup_join_varnullingrels_walker(Node *node, void *__data)
+{
+	RelOptInfo *joinrel = __data;
+	PathTarget *reltarget = joinrel->reltarget;
+	ListCell   *lc;
+
+	if (!node)
+		return NULL;
+	if (IsA(node, Var))
+	{
+		Var	   *var = copyObject((Var *)node);
+
+		foreach (lc, reltarget->exprs)
+		{
+			Var	   *__var = lfirst(lc);
+
+			if (var->varno == __var->varno &&
+				var->varattno == __var->varattno)
+			{
+				Assert(var->vartype   == __var->vartype &&
+					   var->vartypmod == __var->vartypmod &&
+					   var->varcollid == __var->varcollid);
+				var->varnullingrels = bms_copy(__var->varnullingrels);
+				return (Node *)var;
+			}
+		}
+		var->varnullingrels = NULL;
+		return (Node *)var;
+	}
+	return expression_tree_mutator(node, __fixup_join_varnullingrels_walker, __data);
+}
+
+static pgstromPlanInfo *
+fixup_join_varnullingrels(RelOptInfo *joinrel, pgstromPlanInfo *pp_info)
+{
+#define __FIXUP_FIELD(VAL)												\
+	VAL = (void *)__fixup_join_varnullingrels_walker((Node *)(VAL), joinrel)
+
+	__FIXUP_FIELD(pp_info->used_params);
+	__FIXUP_FIELD(pp_info->host_quals);
+	__FIXUP_FIELD(pp_info->scan_quals);
+	__FIXUP_FIELD(pp_info->brin_index_conds);
+	__FIXUP_FIELD(pp_info->brin_index_quals);
+	for (int i=0; i < pp_info->num_rels; i++)
+	{
+		pgstromPlanInnerInfo *pp_inner = &pp_info->inners[i];
+
+		__FIXUP_FIELD(pp_inner->hash_outer_keys);
+		__FIXUP_FIELD(pp_inner->hash_inner_keys);
+		__FIXUP_FIELD(pp_inner->join_quals);
+		__FIXUP_FIELD(pp_inner->other_quals);
+		__FIXUP_FIELD(pp_inner->gist_clause);
+	}
+#undef __FIXUP_FIELD
+	return pp_info;
+}
+#endif
 
 /*
  * __buildXpuJoinPlanInfo
@@ -150,6 +360,7 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 	pgstromPlanInfo *pp_info;
 	pgstromPlanInnerInfo *pp_inner;
 	Path		   *inner_path = llast(inner_paths_list);
+	Path		   *temp_path;
 	RelOptInfo	   *inner_rel = inner_path->parent;
 	RelOptInfo	   *outer_rel = op_prev->leaf_rel;
 	Cardinality		outer_nrows;
@@ -159,9 +370,11 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 	Cost			run_cost;
 	Cost			final_cost;
 	Cost			comp_cost = 0.0;
+	Cost			inner_final_cost = 0.0;
 	bool			enable_xpuhashjoin;
 	bool			enable_xpugistindex;
 	double			xpu_tuple_cost;
+	Cost			xpu_operator_cost;
 	Cost			xpu_ratio;
 	QualCost		join_quals_cost;
 	List		   *join_quals = NIL;
@@ -184,6 +397,7 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 		enable_xpuhashjoin  = pgstrom_enable_gpuhashjoin;
 		enable_xpugistindex = pgstrom_enable_gpugistindex;
 		xpu_tuple_cost      = pgstrom_gpu_tuple_cost;
+		xpu_operator_cost   = cpu_operator_cost * pgstrom_gpu_operator_ratio();
 		xpu_ratio           = pgstrom_gpu_operator_ratio();
 	}
 	else if ((pp_prev->xpu_task_flags & DEVKIND__ANY) == DEVKIND__NVIDIA_DPU)
@@ -191,6 +405,7 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 		enable_xpuhashjoin  = pgstrom_enable_dpuhashjoin;
 		enable_xpugistindex = pgstrom_enable_dpugistindex;
 		xpu_tuple_cost      = pgstrom_dpu_tuple_cost;
+		xpu_operator_cost   = cpu_operator_cost * pgstrom_dpu_operator_ratio();
 		xpu_ratio           = pgstrom_dpu_operator_ratio();
 	}
 	else
@@ -322,7 +537,6 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 
 	pp_inner = &pp_info->inners[pp_info->num_rels++];
 	pp_inner->join_type = join_type;
-	pp_inner->join_nrows = joinrel->rows;
 	pp_inner->hash_outer_keys = hash_outer_keys;
 	pp_inner->hash_inner_keys = hash_inner_keys;
 	pp_inner->join_quals = join_quals;
@@ -342,8 +556,17 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 									  inner_target_list,
 									  pp_inner);
 		if (gist_inner_path)
-			llast(inner_paths_list) = gist_inner_path;
+			llast(inner_paths_list) = inner_path = gist_inner_path;
 	}
+	/*
+	 * Try pinned inner buffer
+	 */
+	temp_path = tryPinnedInnerJoinBufferPath(pp_info,
+											 pp_inner,
+											 inner_path,
+											 &inner_final_cost);
+	if (temp_path)
+		llast(inner_paths_list) = inner_path = temp_path;
 
 	/*
 	 * Cost estimation
@@ -371,8 +594,11 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 		}
 		inner_nrows *= divisor;
 	}
-	inner_cost += (inner_path->total_cost +
-				   inner_nrows * cpu_tuple_cost) * inner_discount_ratio;
+	inner_cost += inner_path->total_cost;
+	if (pp_inner->inner_pinned_buffer)
+		inner_cost -= inner_final_cost * inner_discount_ratio;
+	else
+		inner_cost += cpu_tuple_cost * inner_nrows * inner_discount_ratio;
 
 	/*
 	 * Cost for join_quals
@@ -389,11 +615,11 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 		int		num_hashkeys = list_length(hash_outer_keys);
 
 		/* cost to compute inner hash value by CPU */
-		startup_cost += cpu_operator_cost * num_hashkeys * inner_path->rows;
+		startup_cost += (pp_inner->inner_pinned_buffer
+						 ? xpu_operator_cost
+						 : cpu_operator_cost) * num_hashkeys * inner_path->rows;
 		/* cost to comput hash value by GPU */
-		comp_cost += (cpu_operator_cost * xpu_ratio *
-					  num_hashkeys *
-					  outer_nrows);
+		comp_cost += xpu_operator_cost * num_hashkeys * outer_nrows;
 		/* cost to evaluate join qualifiers */
 		comp_cost += join_quals_cost.per_tuple * xpu_ratio * outer_nrows;
 	}
@@ -428,7 +654,8 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 		 */
 
 		/* cost to preload inner heap tuples by CPU */
-		startup_cost += cpu_tuple_cost * inner_path->rows;
+		if (!pp_inner->inner_pinned_buffer)
+			startup_cost += cpu_tuple_cost * inner_path->rows;
 
 		/* cost to evaluate join qualifiers by GPU */
 		comp_cost += (join_quals_cost.per_tuple * xpu_ratio *
@@ -438,7 +665,7 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 	/* discount if CPU parallel is enabled */
 	run_cost += (comp_cost / pp_info->parallel_divisor);
 	/* cost for DMA receive (xPU --> Host) */
-	final_cost += (xpu_tuple_cost * joinrel->rows) / pp_info->parallel_divisor;
+	run_cost += (xpu_tuple_cost * joinrel->rows) / pp_info->parallel_divisor;
 	/* cost for host projection */
 	final_cost += (joinrel->reltarget->cost.per_tuple *
 				   joinrel->rows / pp_info->parallel_divisor);
@@ -447,9 +674,10 @@ __buildXpuJoinPlanInfo(PlannerInfo *root,
 	pp_info->inner_cost = inner_cost;
 	pp_info->run_cost = run_cost;
 	pp_info->final_cost = final_cost;
-	pp_inner->join_nrows = (joinrel->rows / pp_info->parallel_divisor);
+	pp_info->final_nrows = joinrel->rows;
+	pp_inner->join_nrows = clamp_row_est(joinrel->rows / pp_info->parallel_divisor);
 
-	return pp_info;
+	return fixup_join_varnullingrels(joinrel, pp_info);
 }
 
 /*
@@ -496,7 +724,6 @@ __build_simple_xpujoin_path(PlannerInfo *root,
 										   &restrict_clauses);
 	if (restrict_clauses == NIL)
 		return NULL;		/* cross join is not welcome */
-
 	/*
 	 * Build a new pgstromPlanInfo
 	 */
@@ -612,6 +839,174 @@ try_add_xpujoin_simple_path(PlannerInfo *root,
 		add_path(join_rel, &cpath->path);
 	else
 		add_partial_path(join_rel, &cpath->path);
+}
+
+/*
+ * try_add_sorted_gpujoin_path
+ */
+#define LOG2(x)		(log(x) / 0.693147180559945)
+
+void
+try_add_sorted_gpujoin_path(PlannerInfo *root,
+							RelOptInfo *join_rel,
+							CustomPath *cpath,
+							bool be_parallel)
+{
+	pgstromPlanInfo *pp_info = linitial(cpath->custom_private);
+	PathTarget *final_target = cpath->path.pathtarget;
+	List	   *sortkeys_upper = NIL;
+	List	   *sortkeys_expr = NIL;
+	List	   *sortkeys_kind = NIL;
+	List	   *inner_target_list = NIL;
+	ListCell   *lc1, *lc2;
+	size_t		unitsz, buffer_sz, devmem_sz;
+	int			nattrs;
+	Cost		per_tuple_cost;
+	Cost		gpusort_cost;
+
+	if (!pgstrom_enable_gpusort)
+	{
+		elog(DEBUG1, "gpusort: disabled by pg_strom.enable_gpusort");
+		return;
+	}
+	if (pgstrom_cpu_fallback_elevel < ERROR)
+	{
+		elog(DEBUG1, "gpusort: disabled by pg_strom.cpu_fallback");
+		return;
+	}
+	if ((pp_info->xpu_task_flags & DEVKIND__NVIDIA_GPU) == 0)
+	{
+		elog(DEBUG1, "gpusort: disabled, because only GPUs are supported (flags: %08x)",
+			 pp_info->xpu_task_flags);
+		return;		/* feture available on GPU only */
+	}
+	/* pick up upper sortkeys */
+	if (root->window_pathkeys != NIL)
+        sortkeys_upper = root->window_pathkeys;
+    else if (root->distinct_pathkeys != NIL)
+        sortkeys_upper = root->distinct_pathkeys;
+    else if (root->sort_pathkeys != NIL)
+        sortkeys_upper = root->sort_pathkeys;
+    else if (root->query_pathkeys != NIL)
+        sortkeys_upper = root->query_pathkeys;
+	else
+	{
+		elog(DEBUG1, "gpusort: disabled because no sortable pathkeys");
+		return;		/* no upper sortkeys */
+	}
+
+	/*
+	 * buffer size estimation, because GPU-Sort needs kds_final buffer to save
+	 * the result of GPU-Projection until Bitonic-sorting.
+	 */
+	nattrs = list_length(final_target->exprs);
+	unitsz = offsetof(kern_tupitem, htup) +
+		MAXALIGN(offsetof(HeapTupleHeaderData,
+						  t_bits) + BITMAPLEN(nattrs)) +
+		MAXALIGN(final_target->width);
+	buffer_sz = MAXALIGN(offsetof(kern_data_store, colmeta[nattrs])) +
+		sizeof(uint64_t) * pp_info->final_nrows +
+		unitsz * pp_info->final_nrows;
+	devmem_sz = GetGpuMinimalDeviceMemorySize();
+	if (buffer_sz > devmem_sz)
+	{
+		elog(DEBUG1, "gpusort: disabled by too large final buffer (expected: %s, physical: %s)",
+			 format_bytesz(buffer_sz),
+			 format_bytesz(devmem_sz));
+		return;		/* too large */
+	}
+	/* preparation for pgstrom_xpu_expression */
+	foreach (lc1, cpath->custom_paths)
+	{
+		inner_target_list = lappend(inner_target_list,
+									((Path *)lfirst(lc1))->pathtarget);
+	}
+	/* check whether the sorting key is supported */
+	foreach (lc1, sortkeys_upper)
+	{
+		PathKey	   *pk = lfirst(lc1);
+		EquivalenceClass *ec = pk->pk_eclass;
+		EquivalenceMember *em;
+		Expr	   *em_expr;
+		devtype_info *dtype;
+		bool		found = false;
+
+		if (list_length(ec->ec_members) != 1 ||
+			ec->ec_sources != NIL ||
+			ec->ec_derives != NIL)
+			return;		/* not supported */
+
+		/* strip Relabel for equal() comparison */
+		em = (EquivalenceMember *)linitial(ec->ec_members);
+		for (em_expr = em->em_expr;
+			 IsA(em_expr, RelabelType);
+			 em_expr = ((RelabelType *)em_expr)->arg);
+		/* check whether the em_expr is fully executable on device */
+		if (!pgstrom_xpu_expression(em_expr,
+									pp_info->xpu_task_flags,
+									pp_info->scan_relid,
+									inner_target_list, NULL))
+			return;		/* not supported */
+		dtype = pgstrom_devtype_lookup(exprType((Node *)em_expr));
+		if (!dtype || (dtype->type_flags & DEVTYPE__HAS_COMPARE) == 0)
+			return;		/* not supported */
+		/* lookup the sorting keys */
+		foreach (lc2, final_target->exprs)
+		{
+			Node   *f_expr = lfirst(lc2);
+
+			if (equal(f_expr, em_expr))
+			{
+				int		kind = KSORT_KEY_KIND__VREF;
+
+				if (pk->pk_nulls_first)
+					kind |= KSORT_KEY_ATTR__NULLS_FIRST;
+				if (pk->pk_strategy == BTLessStrategyNumber)
+					kind |= KSORT_KEY_ATTR__ORDER_ASC;
+				else if (pk->pk_strategy != BTLessStrategyNumber)
+					return;		/* should not happen */
+				sortkeys_expr = lappend(sortkeys_expr, f_expr);
+				sortkeys_kind = lappend_int(sortkeys_kind, kind);
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			return;		/* not found */
+	}
+	/* duplicate GpuScan/GpuJoin path and attach GPU-Sort */
+	gpusort_cost = (2.0 * pgstrom_gpu_operator_cost *
+					cpath->path.rows *
+					LOG2(cpath->path.rows));
+	cpath = (CustomPath *)pgstrom_copy_pathnode(&cpath->path);
+	pp_info = copy_pgstrom_plan_info(pp_info);
+	pp_info->xpu_task_flags |= (DEVTASK__PINNED_ROW_RESULTS |
+								DEVTASK__MERGE_FINAL_BUFFER);
+	pp_info->gpusort_keys_expr = sortkeys_expr;
+	pp_info->gpusort_keys_kind = sortkeys_kind;
+	linitial(cpath->custom_private) = pp_info;
+	per_tuple_cost = (cpath->path.pathtarget->cost.per_tuple +
+					  pgstrom_gpu_tuple_cost);
+	cpath->path.startup_cost = (cpath->path.total_cost
+								- per_tuple_cost * cpath->path.rows / 2.0
+								+ gpusort_cost);
+	cpath->path.total_cost   = (cpath->path.startup_cost
+								+ per_tuple_cost * cpath->path.rows / 2.0);
+	/* add path */
+	if (!be_parallel)
+		add_path(join_rel, &cpath->path);
+	else
+	{
+		GatherPath *gpath = create_gather_path(root,
+											   cpath->path.parent,
+											   &cpath->path,
+											   cpath->path.pathtarget,
+											   NULL,
+											   &cpath->path.rows);
+		gpath->path.pathkeys = sortkeys_upper;
+
+		add_path(join_rel, &gpath->path);
+	}
 }
 
 /*
@@ -1160,17 +1555,8 @@ __pgstrom_build_tlist_dev_expr(List *tlist_dev,
 	int			resno;
 	ListCell   *lc1, *lc2;
 
-	if (!node)
+	if (!node || tlist_member((Expr *)node, tlist_dev))
 		return tlist_dev;
-
-	/* check whether the node is already on the tlist_dev */
-	foreach (lc1, tlist_dev)
-	{
-		TargetEntry	*tle = lfirst(lc1);
-
-		if (codegen_expression_equals(node, tle->expr))
-			return tlist_dev;
-	}
 
 	/* check whether the node is identical with any of input */
 	if (IsA(node, Var))
@@ -1192,7 +1578,7 @@ __pgstrom_build_tlist_dev_expr(List *tlist_dev,
 		resno = 1;
 		foreach (lc2, reltarget->exprs)
 		{
-			if (codegen_expression_equals(node, lfirst(lc2)))
+			if (equal(node, lfirst(lc2)))
 				goto found;
 			resno++;
 		}
@@ -1236,92 +1622,6 @@ found:
 		}
 	}
 	return tlist_dev;
-}
-
-/*
- * __build_explain_tlist_junks
- *
- * it builds junk TLEs for EXPLAIN output only
- */
-static void
-__build_explain_tlist_junks(codegen_context *context,
-							PlannerInfo *root,
-							const Bitmapset *outer_refs)
-{
-	Index		scan_relid = context->scan_relid;
-	RelOptInfo *base_rel = root->simple_rel_array[scan_relid];
-	RangeTblEntry *rte = root->simple_rte_array[scan_relid];
-	int			j, k;
-
-	Assert(IS_SIMPLE_REL(base_rel) && rte->rtekind == RTE_RELATION);
-	/* depth==0 */
-	for (j = bms_next_member(outer_refs, -1);
-		 j >= 0;
-		 j = bms_next_member(outer_refs, j))
-	{
-		Var	   *var;
-		char   *attname;
-
-		k = j + FirstLowInvalidHeapAttributeNumber;
-		if (k != InvalidAttrNumber)
-		{
-			HeapTuple	htup;
-			Form_pg_attribute attr;
-
-			htup = SearchSysCache2(ATTNUM,
-								   ObjectIdGetDatum(rte->relid),
-								   Int16GetDatum(k));
-			if (!HeapTupleIsValid(htup))
-				elog(ERROR,"cache lookup failed for attriubte %d of relation %u",
-					 k, rte->relid);
-			attr = (Form_pg_attribute) GETSTRUCT(htup);
-			var = makeVar(base_rel->relid,
-						  attr->attnum,
-						  attr->atttypid,
-						  attr->atttypmod,
-						  attr->attcollation,
-						  0);
-			attname = pstrdup(NameStr(attr->attname));
-			ReleaseSysCache(htup);
-		}
-		else
-		{
-			/* special case handling if whole row reference */
-			var = makeWholeRowVar(rte,
-								  base_rel->relid,
-								  0, false);
-			attname = get_rel_name(rte->relid);
-		}
-
-		if (tlist_member((Expr *)var, context->tlist_dev) == NULL)
-		{
-			TargetEntry *tle;
-			int		resno = list_length(context->tlist_dev) + 1;
-
-			tle = makeTargetEntry((Expr *)var, resno, attname, true);
-			context->tlist_dev = lappend(context->tlist_dev, tle);
-		}
-	}
-	/* depth > 0 */
-	for (int depth=1; depth <= context->num_rels; depth++)
-	{
-		PathTarget *target = context->pd[depth].inner_target;
-		ListCell   *lc;
-
-		foreach (lc, target->exprs)
-		{
-			Expr   *expr = lfirst(lc);
-
-			if (tlist_member(expr, context->tlist_dev) == NULL)
-			{
-				TargetEntry *tle;
-				int		resno = list_length(context->tlist_dev) + 1;
-
-				tle = makeTargetEntry(expr, resno, NULL, true);
-				context->tlist_dev = lappend(context->tlist_dev, tle);
-			}
-		}
-	}
 }
 
 static void
@@ -1392,22 +1692,32 @@ pgstrom_build_join_tlist_dev(codegen_context *context,
 static void
 pgstrom_build_groupby_tlist_dev(codegen_context *context,
 								PlannerInfo *root,
-								List *tlist)
+								List *tlist,
+								List *groupby_actions)
 {
 	ListCell   *lc1, *lc2;
 
 	context->tlist_dev = copyObject(tlist);
-	foreach (lc1, tlist)
+	forboth (lc1, tlist,
+			 lc2, groupby_actions)
 	{
 		TargetEntry *tle = lfirst(lc1);
+		int		action = lfirst_int(lc2);
 
-		if (IsA(tle->expr, FuncExpr))
+		if (action == KAGG_ACTION__VREF ||
+			action == KAGG_ACTION__VREF_NOKEY ||
+			!IsA(tle->expr, FuncExpr))
+		{
+			Assert(tlist_member(tle->expr, context->tlist_dev));
+		}
+		else
 		{
 			FuncExpr   *f = (FuncExpr *)tle->expr;
+			ListCell   *cell;
 
-			foreach (lc2, f->args)
+			foreach (cell, f->args)
 			{
-				Expr   *arg = lfirst(lc2);
+				Expr   *arg = lfirst(cell);
 				int		resno = list_length(context->tlist_dev) + 1;
 
 				if (!tlist_member(arg, context->tlist_dev))
@@ -1418,11 +1728,94 @@ pgstrom_build_groupby_tlist_dev(codegen_context *context,
 				}
 			}
 		}
-		else
-		{
-			Assert(tlist_member(tle->expr, context->tlist_dev));
-		}
 	}
+}
+
+
+/*
+ * build_explain_tlist_junks
+ *
+ * it builds junk TLEs for EXPLAIN output only
+ */
+static bool
+__build_explain_tlist_junks_walker(Node *node, void *__priv)
+{
+	codegen_context *context = __priv;
+
+	if (!node)
+		return false;
+
+	if (tlist_member((Expr *)node, context->tlist_dev) != NULL)
+		return false;
+	if (IsA(node, Var))
+	{
+		TargetEntry *tle;
+
+		tle = makeTargetEntry((Expr *)node,
+							  list_length(context->tlist_dev) + 1,
+							  NULL,
+							  true);
+		context->tlist_dev = lappend(context->tlist_dev, tle);
+		return false;
+	}
+	return expression_tree_walker(node, __build_explain_tlist_junks_walker, __priv);
+}
+
+static void
+build_explain_tlist_junks(codegen_context *context,
+						  pgstromPlanInfo *pp_info,
+						  const Bitmapset *outer_refs)
+{
+	List   *vars_in_exprs = pull_vars_of_level((Node *)context->tlist_dev, 0);
+
+	__build_explain_tlist_junks_walker((Node *)pp_info->used_params, context);
+	__build_explain_tlist_junks_walker((Node *)pp_info->host_quals, context);
+	__build_explain_tlist_junks_walker((Node *)pp_info->scan_quals, context);
+
+	for (int i=0; i < pp_info->num_rels; i++)
+	{
+		pgstromPlanInnerInfo *pp_inner = &pp_info->inners[i];
+
+		__build_explain_tlist_junks_walker((Node *)pp_inner->hash_outer_keys,
+										   context);
+		__build_explain_tlist_junks_walker((Node *)pp_inner->hash_inner_keys,
+										   context);
+		__build_explain_tlist_junks_walker((Node *)pp_inner->join_quals,
+										   context);
+		__build_explain_tlist_junks_walker((Node *)pp_inner->other_quals,
+										   context);
+		__build_explain_tlist_junks_walker((Node *)pp_inner->gist_clause,
+										   context);
+	}
+	__build_explain_tlist_junks_walker((Node *)vars_in_exprs, context);
+	
+	/* sanity checks for outer references */
+#ifdef USE_ASSERT_CHECKING
+	for (int j = bms_next_member(outer_refs, -1);
+		 j >= 0;
+		 j = bms_next_member(outer_refs, j))
+	{
+		int			anum = j + FirstLowInvalidHeapAttributeNumber;
+		ListCell   *lc;
+
+		foreach (lc, context->tlist_dev)
+		{
+			TargetEntry *tle = lfirst(lc);
+
+			if (IsA(tle->expr, Var))
+			{
+				Var	   *var = (Var *)tle->expr;
+
+				if (var->varno == pp_info->scan_relid &&
+					var->varattno == anum)
+					break;
+			}
+		}
+		if (lc == NULL)
+			elog(INFO, "scan_relid=%d anum=%d tlist_dev=%s", pp_info->scan_relid, anum, nodeToString(context->tlist_dev));
+		Assert(lc != NULL);
+	}
+#endif
 }
 
 /*
@@ -1509,20 +1902,26 @@ PlanXpuJoinPathCommon(PlannerInfo *root,
 	{
 		Relids	leaf_relids = cpath->path.parent->relids;
 		tlist = fixup_expression_by_partition_leaf(root, leaf_relids, tlist);
-		pgstrom_build_groupby_tlist_dev(context, root, tlist);
+		pgstrom_build_groupby_tlist_dev(context, root, tlist,
+										pp_info->groupby_actions);
 		codegen_build_groupby_actions(context, pp_info);
 	}
 	else
 	{
 		/* build device projection */
+		List   *proj_hash = pp_info->projection_hashkeys;
+
 		pgstrom_build_join_tlist_dev(context, root, joinrel, tlist);
-		pp_info->kexp_projection = codegen_build_projection(context);
+		pp_info->kexp_projection = codegen_build_projection(context,
+															proj_hash);
 	}
 	pull_varattnos((Node *)context->tlist_dev,
 				   pp_info->scan_relid,
 				   &outer_refs);
-	__build_explain_tlist_junks(context, root, outer_refs);
-
+	build_explain_tlist_junks(context, pp_info, outer_refs);
+	/* attach GPU-Sort key definitions, if any */
+	pp_info->kexp_gpusort_keydesc = codegen_build_gpusort_keydesc(context, pp_info);
+	
 	/* assign remaining PlanInfo members */
 	pp_info->kexp_join_quals_packed
 		= codegen_build_packed_joinquals(context,
@@ -1799,46 +2198,166 @@ execInnerPreloadOneDepth(MemoryContext memcxt,
  * innerPreloadSetupGiSTIndex
  */
 static void
-__innerPreloadSetupGiSTIndexWalker(char *base,
+__innerPreloadSetupGiSTIndexWalker(Relation i_rel,
+								   char *base,
 								   BlockNumber blkno,
 								   BlockNumber nblocks,
 								   BlockNumber parent_blkno,
 								   OffsetNumber parent_offno)
 {
-	Page			page = (Page)(base + BLCKSZ * blkno);
-	PageHeader		hpage = (PageHeader) page;
-	GISTPageOpaque	op = GistPageGetOpaque(page);
-	OffsetNumber	i, maxoff;
+	while (blkno < nblocks)
+	{
+		Page			page = (Page)(base + BLCKSZ * blkno);
+		PageHeader		hpage = (PageHeader) page;
+		OffsetNumber	i, maxoff;
 
-	Assert(hpage->pd_lsn.xlogid == InvalidBlockNumber &&
-		   hpage->pd_lsn.xrecoff == InvalidOffsetNumber);
-	hpage->pd_lsn.xlogid = parent_blkno;
-	hpage->pd_lsn.xrecoff = parent_offno;
-	if ((op->flags & F_LEAF) != 0)
-		return;
-	maxoff = PageGetMaxOffsetNumber(page);
-	for (i=FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
-    {
-		ItemId		iid = PageGetItemId(page, i);
-		IndexTuple	it;
-		BlockNumber	child;
+		Assert(hpage->pd_lsn.xlogid == InvalidBlockNumber &&
+			   hpage->pd_lsn.xrecoff == InvalidOffsetNumber);
+		hpage->pd_lsn.xlogid = parent_blkno;
+		hpage->pd_lsn.xrecoff = parent_offno;
+		if (!GistPageIsLeaf(page))
+		{
+			maxoff = PageGetMaxOffsetNumber(page);
+			for (i = FirstOffsetNumber;
+				 i <= maxoff;
+				 i = OffsetNumberNext(i))
+			{
+				ItemId		iid = PageGetItemId(page, i);
+				IndexTuple	it;
+				BlockNumber	child;
 
-		if (ItemIdIsDead(iid))
-			continue;
-		it = (IndexTuple) PageGetItem(page, iid);
-		child = BlockIdGetBlockNumber(&it->t_tid.ip_blkid);
-		if (child < nblocks)
-			__innerPreloadSetupGiSTIndexWalker(base, child, nblocks, blkno, i);
+				if (!ItemIdIsNormal(iid))
+					continue;
+				it = (IndexTuple) PageGetItem(page, iid);
+				child = BlockIdGetBlockNumber(&it->t_tid.ip_blkid);
+				if (child < nblocks)
+					__innerPreloadSetupGiSTIndexWalker(i_rel,
+													   base,
+													   child,
+													   nblocks,
+													   blkno, i);
+				else
+					elog(ERROR, "GiST-Index '%s' may be corrupted: index-node %u of block %u dives into %u but out of the relation (nblocks=%u)",
+						 RelationGetRelationName(i_rel),
+						 i, blkno, child, nblocks);
+			}
+		}
+
+		if (GistFollowRight(page))
+			blkno = GistPageGetOpaque(page)->rightlink;
+		else
+			break;
 	}
 }
 
 static void
-innerPreloadSetupGiSTIndex(kern_data_store *kds_gist)
+innerPreloadSetupGiSTIndex(Relation i_rel, kern_data_store *kds_gist)
 {
-	__innerPreloadSetupGiSTIndexWalker((char *)KDS_BLOCK_PGPAGE(kds_gist, 0),
+	char   *base = (char *)KDS_BLOCK_PGPAGE(kds_gist, 0);
+
+	__innerPreloadSetupGiSTIndexWalker(i_rel, base,
 									   0, kds_gist->nitems,
 									   InvalidBlockNumber,
 									   InvalidOffsetNumber);
+}
+
+/*
+ * innerPreloadSetupPinnedInnerBufferPartitions
+ */
+static size_t
+innerPreloadSetupPinnedInnerBufferPartitions(kern_multirels *h_kmrels,
+											 pgstromTaskState *pts,
+											 size_t offset)
+{
+	pgstromSharedState *ps_state = pts->ps_state;
+	size_t		partition_sz = (size_t)__pinned_inner_buffer_partition_size_mb << 20;
+	size_t		largest_sz = 0;
+	int			largest_depth = -1;
+
+	for (int depth=1; depth <= pts->num_rels; depth++)
+	{
+		if (pts->inners[depth-1].inner_pinned_buffer)
+		{
+			size_t	sz = pg_atomic_read_u64(&ps_state->inners[depth-1].inner_total);
+
+			if (largest_depth < 0 || sz > largest_sz)
+			{
+				largest_sz = sz;
+				largest_depth = depth;
+			}
+		}
+	}
+
+	if (largest_depth > 0 && largest_sz > partition_sz)
+	{
+		int		divisor = (largest_sz + partition_sz - 1) / partition_sz;
+		size_t	kbuf_parts_sz = MAXALIGN(offsetof(kern_buffer_partitions,
+												  parts[divisor]));
+		if (h_kmrels)
+		{
+			PlanState  *__inner_ps = pts->inners[largest_depth-1].ps;
+			kern_buffer_partitions *kbuf_parts = (kern_buffer_partitions *)
+				((char *)h_kmrels + offset);
+
+			memset(kbuf_parts, 0, kbuf_parts_sz);
+			kbuf_parts->inner_depth  = largest_depth;
+			kbuf_parts->hash_divisor = divisor;
+			/* assign GPUs for each partition */
+			for (int base=0; base < divisor; base += numGpuDevAttrs)
+			{
+				gpumask_t	optimal_gpus = pts->optimal_gpus;
+				gpumask_t	other_gpus = (GetSystemAvailableGpus() & ~optimal_gpus);
+				int			count = 0;
+				int			unitsz = Min(divisor-base, numGpuDevAttrs);
+
+				while ((optimal_gpus | other_gpus) != 0)
+				{
+					int			__part_id = (count++ % unitsz) + base;
+					gpumask_t	__mask = 1UL;
+
+					if (optimal_gpus != 0)
+					{
+						/* optimal GPUs first */
+						while ((optimal_gpus & __mask) == 0)
+							__mask <<= 1;
+						kbuf_parts->parts[__part_id].available_gpus |= __mask;
+						optimal_gpus &= ~__mask;
+					}
+					else if (other_gpus != 0)
+					{
+						/* elsewhere, other GPUs */
+						while ((other_gpus & __mask) == 0)
+							__mask <<= 1;
+						kbuf_parts->parts[__part_id].available_gpus |= __mask;
+						other_gpus &= ~__mask;
+					}
+					else
+					{
+						elog(ERROR, "Bug? pinned inner-buffer partitions tries to distribute tuples more GPUs than the installed devices");
+					}
+				}
+			}
+			elog(NOTICE, "pinned inner-buffer partitions (depth=%d, divisor=%d)",
+				 kbuf_parts->inner_depth,
+				 kbuf_parts->hash_divisor);
+			for (int k=0; k < kbuf_parts->hash_divisor; k++)
+				elog(NOTICE, "partition-%d (GPUs: %08lx)", k, kbuf_parts->parts[k].available_gpus);
+			/* offset to the partition descriptor */
+			h_kmrels->kbuf_part_offset = offset;
+			/* record partition size for EXPLAIN output */
+			if (pgstrom_is_gpuscan_state(__inner_ps) ||
+				pgstrom_is_gpujoin_state(__inner_ps))
+			{
+				pgstromTaskState   *inner_pts = (pgstromTaskState *)__inner_ps;
+				pgstromSharedState *inner_ps_state = inner_pts->ps_state;
+				if (inner_ps_state)
+					pg_atomic_fetch_add_u32(&inner_ps_state->pinned_buffer_divisor,
+											kbuf_parts->hash_divisor);
+			}
+		}
+		return kbuf_parts_sz;
+	}
+	return 0;
 }
 
 /*
@@ -1853,49 +2372,61 @@ innerPreloadAllocHostBuffer(pgstromTaskState *pts)
 	kern_multirels	   *h_kmrels = NULL;
 	kern_data_store	   *kds = NULL;
 	size_t				offset;
+	size_t				ojmap_sz;
 
 	/* other backend already setup the buffer metadata */
 	if (ps_state->preload_shmem_length > 0)
 		return;
-	
+
 	/*
 	 * 1st pass: calculation of the buffer length
 	 * 2nd pass: initialization of buffer metadata
 	 */
 again:
 	offset = MAXALIGN(offsetof(kern_multirels, chunks[pts->num_rels]));
-	for (int i=0; i < pts->num_rels; i++)
+	offset += innerPreloadSetupPinnedInnerBufferPartitions(h_kmrels, pts, offset);
+	for (int depth=1; depth <= pts->num_rels; depth++)
 	{
-		pgstromTaskInnerState *istate = &pts->inners[i];
+		pgstromTaskInnerState *istate = &pts->inners[depth-1];
 		TupleDesc	tupdesc = istate->ps->ps_ResultTupleDesc;
 		uint64_t	nrooms;
 		uint64_t	usage;
 		size_t		nbytes;
 
-		nrooms = pg_atomic_read_u64(&ps_state->inners[i].inner_nitems);
-		usage  = pg_atomic_read_u64(&ps_state->inners[i].inner_usage);
-		if (h_kmrels)
-		{
-			kds = (kern_data_store *)((char *)h_kmrels + offset);
-			h_kmrels->chunks[i].kds_offset = offset;
-		}
+		nrooms = pg_atomic_read_u64(&ps_state->inners[depth-1].inner_nitems);
+		usage  = pg_atomic_read_u64(&ps_state->inners[depth-1].inner_usage);
+		if (nrooms >= UINT_MAX)
+			elog(ERROR, "GpuJoin: Inner Relation[%d] has %lu tuples, too large",
+				 depth, nrooms);
 
-		nbytes = estimate_kern_data_store(tupdesc);
-		if (istate->hash_inner_keys != NIL &&
-			istate->hash_outer_keys != NIL)
+		if (istate->inner_pinned_buffer)
+		{
+			if (h_kmrels)
+			{
+				//TODO: buffer partitioning
+				h_kmrels->chunks[depth-1].pinned_buffer = true;
+				h_kmrels->chunks[depth-1].buffer_id = istate->inner_buffer_id;
+			}
+		}
+		else if (istate->hash_inner_keys != NIL &&
+				 istate->hash_outer_keys != NIL)
 		{
 			/* Hash-Join */
 			uint32_t	nslots = Max(320, nrooms);
 
-			nbytes += (MAXALIGN(sizeof(uint32_t) * nrooms) +
-					   MAXALIGN(sizeof(uint32_t) * nslots) +
-					   MAXALIGN(usage));
+			nbytes = (estimate_kern_data_store(tupdesc) +
+					  MAXALIGN(sizeof(uint64_t) * nrooms) +
+					  MAXALIGN(sizeof(uint64_t) * nslots) +
+					  MAXALIGN(usage));
 			if (h_kmrels)
 			{
+				kds = (kern_data_store *)((char *)h_kmrels + offset);
+				h_kmrels->chunks[depth-1].kds_offset = offset;
+
 				setup_kern_data_store(kds, tupdesc, nbytes,
 									  KDS_FORMAT_HASH);
 				kds->hash_nslots = nslots;
-				memset(KDS_GET_HASHSLOT_BASE(kds), 0, sizeof(uint32_t) * nslots);
+				memset(KDS_GET_HASHSLOT_BASE(kds), 0, sizeof(uint64_t) * nslots);
 			}
 			offset += nbytes;
 		}
@@ -1909,14 +2440,19 @@ again:
 			uint32_t	nslots = Max(320, nrooms);
 
 			/* 1st part - inner tuples indexed by ctid */
-			nbytes += (MAXALIGN(sizeof(uint32_t) * nrooms) +
-					   MAXALIGN(sizeof(uint32_t) * nslots) +
-					   MAXALIGN(usage));
+			nbytes = (estimate_kern_data_store(tupdesc) +
+					  MAXALIGN(sizeof(uint64_t) * nrooms) +
+					  MAXALIGN(sizeof(uint64_t) * nslots) +
+					  MAXALIGN(usage));
 			if (h_kmrels)
 			{
+				kds = (kern_data_store *)((char *)h_kmrels + offset);
+				h_kmrels->chunks[depth-1].kds_offset = offset;
+
 				setup_kern_data_store(kds, tupdesc, nbytes,
 									  KDS_FORMAT_HASH);
 				kds->hash_nslots = nslots;
+				memset(KDS_GET_HASHSLOT_BASE(kds), 0, sizeof(uint64_t) * nslots);
 			}
 			offset += nbytes;
 
@@ -1927,7 +2463,8 @@ again:
 			if (h_kmrels)
 			{
 				kds = (kern_data_store *)((char *)h_kmrels + offset);
-				h_kmrels->chunks[i].gist_offset = offset;
+				h_kmrels->chunks[depth-1].gist_offset = offset;
+				nbytes = block_offset + BLCKSZ * nblocks;
 
 				setup_kern_data_store(kds, i_tupdesc, nbytes,
 									  KDS_FORMAT_BLOCK);
@@ -1950,62 +2487,80 @@ again:
 
 					UnlockReleaseBuffer(buffer);
 				}
-				kds->length = block_offset + BLCKSZ * nblocks;
+				kds->length = nbytes;
 				kds->nitems = nblocks;
 				kds->block_nloaded = nblocks;
-				innerPreloadSetupGiSTIndex(kds);
+				innerPreloadSetupGiSTIndex(i_rel, kds);
 			}
-			offset += (block_offset + BLCKSZ * nblocks);
+			offset += nbytes;
 		}
 		else
 		{
 			/* Nested-Loop */
-			nbytes += (MAXALIGN(sizeof(uint32_t) * nrooms) +
-					   MAXALIGN(usage));
+			nbytes = (estimate_kern_data_store(tupdesc) +
+					  MAXALIGN(sizeof(uint64_t) * nrooms) +
+					  MAXALIGN(usage));
 			if (h_kmrels)
 			{
+				kds = (kern_data_store *)((char *)h_kmrels + offset);
+				h_kmrels->chunks[depth-1].kds_offset = offset;
+
 				setup_kern_data_store(kds, tupdesc, nbytes,
 									  KDS_FORMAT_ROW);
-				h_kmrels->chunks[i].is_nestloop = true;
+				h_kmrels->chunks[depth-1].is_nestloop = true;
 			}
 			offset += nbytes;
 		}
+	}
+
+	/*
+	 * Parameters for OUTER JOIN
+	 */
+	offset = PAGE_ALIGN(offset);
+	ojmap_sz = 0;
+	for (int depth=1; depth <= pts->num_rels; depth++)
+	{
+		pgstromTaskInnerState *istate = &pts->inners[depth-1];
+		uint64_t	nrooms;
+		size_t		nbytes;
 
 		if (istate->join_type == JOIN_RIGHT ||
 			istate->join_type == JOIN_FULL)
-		{
+        {
+			nrooms = pg_atomic_read_u64(&ps_state->inners[depth-1].inner_nitems);
 			nbytes = MAXALIGN(sizeof(bool) * nrooms);
 			if (h_kmrels)
 			{
-				h_kmrels->chunks[i].right_outer = true;
-				h_kmrels->chunks[i].ojmap_offset = offset;
+				h_kmrels->chunks[depth-1].right_outer = true;
+				h_kmrels->chunks[depth-1].ojmap_offset = offset;
 				memset((char *)h_kmrels + offset, 0, nbytes);
 			}
 			offset += nbytes;
+			ojmap_sz += nbytes;
 		}
 		if (istate->join_type == JOIN_LEFT ||
 			istate->join_type == JOIN_FULL)
 		{
 			if (h_kmrels)
-				h_kmrels->chunks[i].left_outer = true;
-		}
+				h_kmrels->chunks[depth-1].left_outer = true;
+        }
 	}
+	offset = PAGE_ALIGN(offset);
 
 	/*
 	 * allocation of the host inner-buffer
 	 */
 	if (!h_kmrels)
 	{
-		size_t		shmem_length = PAGE_ALIGN(offset);
-
 		Assert(ps_state->preload_shmem_handle != 0);
 		h_kmrels = __mmapShmem(ps_state->preload_shmem_handle,
-							   shmem_length, pts->ds_entry);
+							   offset, pts->ds_entry);
 		memset(h_kmrels, 0, offsetof(kern_multirels,
 									 chunks[pts->num_rels]));
 		h_kmrels->length = offset;
+		h_kmrels->ojmap_sz = PAGE_ALIGN(ojmap_sz);
 		h_kmrels->num_rels = pts->num_rels;
-		ps_state->preload_shmem_length = shmem_length;
+		ps_state->preload_shmem_length = offset;
 		goto again;
 	}
 	pts->h_kmrels = h_kmrels;
@@ -2018,14 +2573,14 @@ static void
 __innerPreloadSetupHeapBuffer(kern_data_store *kds,
 							  pgstromTaskInnerState *istate,
 							  uint32_t base_nitems,
-							  uint32_t base_usage)
+							  uint64_t base_usage)
 {
-	uint32_t   *row_index = KDS_GET_ROWINDEX(kds);
+	uint64_t   *row_index = KDS_GET_ROWINDEX(kds);
 	uint32_t	rowid = base_nitems;
 	char	   *tail_pos = (char *)kds + kds->length;
-	char	   *curr_pos = tail_pos - __kds_unpack(base_usage);
+	char	   *curr_pos = (tail_pos - base_usage);
 	inner_preload_buffer *preload_buf = istate->preload_buffer;
-
+	
 	for (uint32_t index=0; index < preload_buf->nitems; index++)
 	{
 		HeapTuple	htup = preload_buf->rows[index].htup;
@@ -2040,7 +2595,7 @@ __innerPreloadSetupHeapBuffer(kern_data_store *kds,
 		memcpy(&titem->htup, htup->t_data, htup->t_len);
 		memcpy(&titem->htup.t_ctid, &htup->t_self, sizeof(ItemPointerData));
 
-		row_index[rowid++] = __kds_packed(tail_pos - curr_pos);
+		row_index[rowid++] = (tail_pos - curr_pos);
 	}
 }
 
@@ -2051,13 +2606,13 @@ static void
 __innerPreloadSetupHashBuffer(kern_data_store *kds,
 							  pgstromTaskInnerState *istate,
 							  uint32_t base_nitems,
-							  uint32_t base_usage)
+							  uint64_t base_usage)
 {
-	uint32_t   *row_index = KDS_GET_ROWINDEX(kds);
-	uint32_t   *hash_slot = KDS_GET_HASHSLOT_BASE(kds);
+	uint64_t   *row_index = KDS_GET_ROWINDEX(kds);
+	uint64_t   *hash_slot = KDS_GET_HASHSLOT_BASE(kds);
 	uint32_t	rowid = base_nitems;
 	char	   *tail_pos = (char *)kds + kds->length;
-	char	   *curr_pos = tail_pos - __kds_unpack(base_usage);
+	char	   *curr_pos = (tail_pos - base_usage);
 	inner_preload_buffer *preload_buf = istate->preload_buffer;
 
 	for (uint32_t index=0; index < preload_buf->nitems; index++)
@@ -2065,24 +2620,28 @@ __innerPreloadSetupHashBuffer(kern_data_store *kds,
 		HeapTuple	htup = preload_buf->rows[index].htup;
 		uint32_t	hash = preload_buf->rows[index].hash;
 		uint32_t	hindex = hash % kds->hash_nslots;
-		uint32_t	next, self;
+		uint64_t	next, self;
 		size_t		sz;
 		kern_hashitem *hitem;
 
 		sz = MAXALIGN(offsetof(kern_hashitem, t.htup) + htup->t_len);
 		curr_pos -= sz;
-		self = __kds_packed(tail_pos - curr_pos);
-		__atomic_exchange(&hash_slot[hindex], &self, &next,
-						  __ATOMIC_SEQ_CST);
+		self = (tail_pos - curr_pos);
+
+		next = __atomic_exchange_uint64(&hash_slot[hindex], self);
 		hitem = (kern_hashitem *)curr_pos;
-		hitem->hash = hash;
 		hitem->next = next;
+		hitem->hash = hash;
+		hitem->__padding__ = 0;
 		hitem->t.t_len = htup->t_len;
 		hitem->t.rowid = rowid;
 		memcpy(&hitem->t.htup, htup->t_data, htup->t_len);
 		memcpy(&hitem->t.htup.t_ctid, &htup->t_self, sizeof(ItemPointerData));
 
-		row_index[rowid++] = __kds_packed(tail_pos - (char *)&hitem->t);
+		row_index[rowid++] = (tail_pos - (char *)&hitem->t);
+		Assert(curr_pos >= ((char *)kds
+							+ KDS_HEAD_LENGTH(kds)
+							+ sizeof(uint64_t) * (kds->hash_nslots + rowid)));
 	}
 }
 
@@ -2095,6 +2654,7 @@ GpuJoinInnerPreload(pgstromTaskState *pts)
 {
 	pgstromTaskState   *leader = pts;
 	pgstromSharedState *ps_state;
+	kern_buffer_partitions *kbuf_parts;
 	MemoryContext		memcxt;
 
 	//pick up leader's ps_state if partitionwise plan
@@ -2122,9 +2682,30 @@ GpuJoinInnerPreload(pgstromTaskState *pts)
 			{
 				pgstromTaskInnerState *istate = &leader->inners[i];
 
-				execInnerPreloadOneDepth(memcxt, pts, istate,
-										 &ps_state->inners[i].inner_nitems,
-										 &ps_state->inners[i].inner_usage);
+				if (istate->inner_pinned_buffer)
+				{
+					/*
+					 * Pinned Inner Buffer
+					 *
+					 * For large inner relations by GpuScan/GpuJoin, it is waste
+					 * of shared memory consumption and data transfer over the
+					 * IPC connection. We allow to retain GpuScan/GpuJoin results
+					 * on the GPU device memory and reuse it on the next GpuJoin.
+					 */
+					Assert(pgstrom_is_gpuscan_state(istate->ps) ||
+						   pgstrom_is_gpujoin_state(istate->ps));
+					execInnerPreLoadPinnedOneDepth((pgstromTaskState *)istate->ps,
+												   &ps_state->inners[i].inner_nitems,
+												   &ps_state->inners[i].inner_usage,
+												   &ps_state->inners[i].inner_total,
+												   &pts->inners[i].inner_buffer_id);
+				}
+				else
+				{
+					execInnerPreloadOneDepth(memcxt, pts, istate,
+											 &ps_state->inners[i].inner_nitems,
+											 &ps_state->inners[i].inner_usage);
+				}
 			}
 
 			/*
@@ -2193,11 +2774,11 @@ GpuJoinInnerPreload(pgstromTaskState *pts)
 											pts->ds_entry);
 			}
 
-			for (int i=0; i < leader->num_rels; i++)
+			for (int depth=1; depth <= leader->num_rels; depth++)
 			{
-				pgstromTaskInnerState *istate = &leader->inners[i];
+				pgstromTaskInnerState *istate = &leader->inners[depth-1];
 				inner_preload_buffer *preload_buf = istate->preload_buffer;
-				kern_data_store *kds = KERN_MULTIRELS_INNER_KDS(pts->h_kmrels, i);
+				kern_data_store *kds = KERN_MULTIRELS_INNER_KDS(pts->h_kmrels, depth);
 				uint64_t	base_nitems;
 				uint64_t	base_usage;
 
@@ -2209,26 +2790,24 @@ GpuJoinInnerPreload(pgstromTaskState *pts)
 				if (!preload_buf)
 					continue;
 
+				Assert(kds != NULL);
 				SpinLockAcquire(&ps_state->preload_mutex);
-				/*
-				 * Sanity checks - KDS must be less than 32GB because of 32-bit
-				 * offset design (it is always aligned to 64bit).
-				 */
-				if (KDS_HEAD_LENGTH(kds) +
-					MAXALIGN(sizeof(uint32_t) * (kds->hash_nslots +
-												 kds->nitems +
-												 preload_buf->nitems)) +
-					__kds_unpack(kds->usage) +
-					preload_buf->usage >= __KDS_LENGTH_LIMIT)
-				{
-					SpinLockRelease(&ps_state->preload_mutex);
-					elog(ERROR, "Inner-KDS was expanding too large");
-				}
 				base_nitems  = kds->nitems;
 				kds->nitems += preload_buf->nitems;
 				base_usage   = kds->usage;
-				kds->usage  += __kds_packed(preload_buf->usage);
+				kds->usage  += preload_buf->usage;
 				SpinLockRelease(&ps_state->preload_mutex);
+
+				/* sanity checks */
+				if (base_nitems + preload_buf->nitems >= UINT_MAX)
+					elog(ERROR, "GpuJoin: inner relation has %lu tuples, too large",
+						 base_nitems + preload_buf->nitems);
+				Assert(KDS_HEAD_LENGTH(kds) +
+					   MAXALIGN(sizeof(uint64_t) * (kds->hash_nslots +
+													base_nitems +
+													preload_buf->nitems)) +
+					   base_usage +
+					   preload_buf->usage <= kds->length);
 
 				if (kds->format == KDS_FORMAT_ROW)
 					__innerPreloadSetupHeapBuffer(kds, istate,
@@ -2283,8 +2862,17 @@ GpuJoinInnerPreload(pgstromTaskState *pts)
 											pts->ds_entry);
 			}
 
-			//TODO: send the shmem handle to the GPU server or DPU server
-
+			/*
+			 * Inner-buffer partitioning often requires multiple outer-scan,
+			 * if number of partitions is larger than the number of GPU devices.
+			 */
+			kbuf_parts = KERN_MULTIRELS_PARTITION_DESC(pts->h_kmrels, -1);
+			if (kbuf_parts)
+			{
+				pts->num_scan_repeats = (kbuf_parts->hash_divisor +
+										 numGpuDevAttrs - 1) / numGpuDevAttrs;
+				assert(pts->num_scan_repeats > 0);
+			}
 			break;
 
 		default:
@@ -2301,437 +2889,42 @@ GpuJoinInnerPreload(pgstromTaskState *pts)
 }
 
 /*
- * CPU Fallback for JOIN
+ * GpuJoinInnerPreload
  */
-static void
-__execFallbackCpuJoinOneDepth(pgstromTaskState *pts, int depth);
-
-static void
-__execFallbackLoadVarsSlot(TupleTableSlot *fallback_slot,
-						   List *inner_load_src,
-						   List *inner_load_dst,
-						   const kern_data_store *kds,
-						   const ItemPointer t_self,
-						   const HeapTupleHeaderData *htup)
-{
-	uint32_t	h_off = htup->t_hoff;
-	uint32_t	ncols = Min(htup->t_infomask2 & HEAP_NATTS_MASK, kds->ncols);
-	bool		heap_hasnull = ((htup->t_infomask & HEAP_HASNULL) != 0);
-	ListCell   *lc1, *lc2;
-
-	/* extract system attributes, if rquired */
-	forboth (lc1, inner_load_src,
-			 lc2, inner_load_dst)
-	{
-		int		src = lfirst_int(lc1);
-		int		dst = lfirst_int(lc2);
-		Datum	datum;
-
-		if (src >= 0)
-			break;
-		switch (src)
-		{
-			case SelfItemPointerAttributeNumber:
-				datum = PointerGetDatum(t_self);
-				break;
-			case MinTransactionIdAttributeNumber:
-				datum = TransactionIdGetDatum(HeapTupleHeaderGetRawXmin(htup));
-				break;
-			case MaxTransactionIdAttributeNumber:
-				datum = TransactionIdGetDatum(HeapTupleHeaderGetRawXmax(htup));
-				break;
-			case MinCommandIdAttributeNumber:
-			case MaxCommandIdAttributeNumber:
-				datum = CommandIdGetDatum(HeapTupleHeaderGetRawCommandId(htup));
-				break;
-			case TableOidAttributeNumber:
-				datum = ObjectIdGetDatum(kds->table_oid);
-				break;
-			default:
-				elog(ERROR, "invalid attnum: %d", src);
-		}
-		fallback_slot->tts_isnull[dst] = false;
-		fallback_slot->tts_values[dst] = datum;
-	}
-	/* extract the user data */
-	for (int j=0; j < ncols && lc1 && lc2; j++)
-	{
-		const kern_colmeta *cmeta = &kds->colmeta[j];
-		const char *addr;
-		Datum		datum;
-
-		if (heap_hasnull && att_isnull(j, htup->t_bits))
-		{
-			addr = NULL;
-			datum = 0;
-		}
-		else
-		{
-			if (cmeta->attlen > 0)
-				h_off = TYPEALIGN(cmeta->attalign, h_off);
-			else if (!VARATT_NOT_PAD_BYTE((char *)htup + h_off))
-				h_off = TYPEALIGN(cmeta->attalign, h_off);
-			addr = ((char *)htup + h_off);
-			if (cmeta->attlen > 0)
-				h_off += cmeta->attlen;
-			else if (cmeta->attlen == -1)
-				h_off += VARSIZE_ANY(addr);
-			else
-				elog(ERROR, "unknown typlen (%d)", cmeta->attlen);
-
-			if (cmeta->attbyval)
-			{
-				switch (cmeta->attlen)
-				{
-					case 1:
-						datum = *((uint8_t *)addr);
-						break;
-					case 2:
-						datum = *((uint16_t *)addr);
-						break;
-					case 4:
-						datum = *((uint32_t *)addr);
-						break;
-					case 8:
-						datum = *((uint64_t *)addr);
-						break;
-					default:
-						elog(ERROR, "invalid typlen (%d) of inline type",
-							 cmeta->attlen);
-				}
-			}
-			else
-			{
-				datum = PointerGetDatum(addr);
-			}
-		}
-		if (lfirst_int(lc1) == j+1)
-		{
-			int		dst = lfirst_int(lc2) - 1;
-
-			fallback_slot->tts_isnull[dst] = !addr;
-			fallback_slot->tts_values[dst] = datum;
-
-			lc1 = lnext(inner_load_src, lc1);
-			lc2 = lnext(inner_load_dst, lc2);
-		}
-	}
-	/* fill-up by NULL for the remaining fields */
-	while (lc1 && lc2)
-	{
-		int		dst = lfirst_int(lc2) - 1;
-
-		fallback_slot->tts_isnull[dst] = true;
-		fallback_slot->tts_values[dst] = 0;
-
-		lc1 = lnext(inner_load_src, lc1);
-		lc2 = lnext(inner_load_dst, lc2);
-	}
-}
-
-static void
-__execFallbackCpuNestLoop(pgstromTaskState *pts,
-						  kern_data_store *kds_in,
-						  bool *oj_map, int depth)
-{
-	pgstromTaskInnerState *istate = &pts->inners[depth-1];
-	ExprContext    *econtext = pts->css.ss.ps.ps_ExprContext;
-	TupleTableSlot *scan_slot = pts->css.ss.ss_ScanTupleSlot;
-
-	Assert(kds_in->format == KDS_FORMAT_ROW);
-	for (uint32_t index=0; index < kds_in->nitems; index++)
-	{
-		kern_tupitem   *tupitem = KDS_GET_TUPITEM(kds_in, index);
-
-		if (!tupitem)
-			continue;
-		ResetExprContext(econtext);
-		/* load inner variable */
-		if (istate->inner_load_src != NIL &&
-			istate->inner_load_dst != NIL)
-		{
-			ItemPointerData	t_self;
-
-			ItemPointerSetInvalid(&t_self);
-			__execFallbackLoadVarsSlot(scan_slot,
-									   istate->inner_load_src,
-									   istate->inner_load_dst,
-									   kds_in,
-									   &t_self,
-									   &tupitem->htup);
-		}
-		/* check JOIN-clause */
-		if (istate->join_quals != NULL ||
-			ExecQual(istate->join_quals, econtext))
-		{
-			if (istate->other_quals != NULL ||
-				ExecQual(istate->other_quals, econtext))
-			{
-				/* Ok, go to the next depth */
-				__execFallbackCpuJoinOneDepth(pts, depth+1);
-			}
-			/* mark outer-join map, if any */
-			if (oj_map)
-				oj_map[index] = true;
-		}
-	}
-}
-
-static void
-__execFallbackCpuHashJoin(pgstromTaskState *pts,
-						  kern_data_store *kds_in,
-						  bool *oj_map, int depth)
-{
-	pgstromTaskInnerState *istate = &pts->inners[depth-1];
-	ExprContext    *econtext = pts->css.ss.ps.ps_ExprContext;
-	TupleTableSlot *scan_slot = pts->css.ss.ss_ScanTupleSlot;
-	kern_hashitem  *hitem;
-	uint32_t		hash;
-	ListCell	   *lc1, *lc2;
-
-	Assert(kds_in->format == KDS_FORMAT_HASH);
-
-	/*
-	 * Compute that hash-value
-	 */
-	hash = 0xffffffffU;
-	forboth (lc1, istate->hash_outer_keys,
-			 lc2, istate->hash_outer_funcs)
-	{
-		ExprState	   *h_key = lfirst(lc1);
-		devtype_hashfunc_f h_func = lfirst(lc2);
-		Datum			datum;
-		bool			isnull;
-
-		datum = ExecEvalExprSwitchContext(h_key, econtext, &isnull);
-		hash = pg_hash_merge(hash, h_func(isnull, datum));
-	}
-	hash ^= 0xffffffffU;
-
-	/*
-	 * walks on the hash-join-table
-	 */
-	for (hitem = KDS_HASH_FIRST_ITEM(kds_in, hash);
-		 hitem != NULL;
-		 hitem = KDS_HASH_NEXT_ITEM(kds_in, hitem->next))
-	{
-		if (hitem->hash != hash)
-			continue;
-		if (istate->inner_load_src != NIL &&
-			istate->inner_load_dst != NIL)
-		{
-			ItemPointerData	t_self;
-
-			ItemPointerSetInvalid(&t_self);
-			__execFallbackLoadVarsSlot(scan_slot,
-									   istate->inner_load_src,
-									   istate->inner_load_dst,
-									   kds_in,
-									   &t_self,
-									   &hitem->t.htup);
-		}
-		/* check JOIN-clause */
-		if (istate->join_quals == NULL ||
-			ExecQual(istate->join_quals, econtext))
-		{
-			if (istate->other_quals == NULL ||
-				ExecQual(istate->other_quals, econtext))
-			{
-				/* Ok, go to the next depth */
-				__execFallbackCpuJoinOneDepth(pts, depth+1);
-			}
-			/* mark outer-join map, if any */
-			if (oj_map)
-				oj_map[hitem->t.rowid] = true;
-		}
-	}
-}
-
-static void
-__execFallbackCpuProjection(pgstromTaskState *pts)
-{
-	ExprContext	   *econtext = pts->css.ss.ps.ps_ExprContext;
-	TupleTableSlot *scan_slot = pts->css.ss.ss_ScanTupleSlot;
-	ListCell	   *lc;
-	int				dst=0;
-
-	foreach (lc, pts->fallback_proj)
-	{
-		ExprState  *state = lfirst(lc);
-		Datum		datum;
-		bool		isnull;
-
-		if (state)
-		{
-			datum = ExecEvalExpr(state, econtext, &isnull);
-
-			if (isnull)
-			{
-				scan_slot->tts_isnull[dst] = true;
-				scan_slot->tts_values[dst] = 0;
-			}
-			else
-			{
-				scan_slot->tts_isnull[dst] = false;
-				scan_slot->tts_values[dst] = datum;
-			}
-		}
-		dst++;
-	}
-}
-
-static void
-__execFallbackCpuJoinOneDepth(pgstromTaskState *pts, int depth)
-{
-	if (depth > pts->num_rels)
-	{
-		/* apply projection if any */
-		TupleTableSlot *scan_slot = pts->css.ss.ss_ScanTupleSlot;
-		HeapTuple	tuple;
-
-		if (pts->fallback_proj)
-			__execFallbackCpuProjection(pts);
-		tuple = heap_form_tuple(scan_slot->tts_tupleDescriptor,
-								scan_slot->tts_values,
-								scan_slot->tts_isnull);
-		pgstromStoreFallbackTuple(pts, tuple);
-		pfree(tuple);
-	}
-	else
-	{
-		kern_multirels	   *h_kmrels = pts->h_kmrels;
-		kern_data_store	   *kds_in;
-		bool			   *oj_map;
-
-		kds_in = KERN_MULTIRELS_INNER_KDS(h_kmrels, depth-1);
-		oj_map = KERN_MULTIRELS_OUTER_JOIN_MAP(h_kmrels, depth-1);
-		if (h_kmrels->chunks[depth-1].is_nestloop)
-		{
-			__execFallbackCpuNestLoop(pts, kds_in, oj_map, depth);
-		}
-		else
-		{
-			__execFallbackCpuHashJoin(pts, kds_in, oj_map, depth);
-		}
-	}
-}
-
-bool
-ExecFallbackCpuJoin(pgstromTaskState *pts, HeapTuple tuple)
-{
-	ExprContext    *econtext = pts->css.ss.ps.ps_ExprContext;
-	TupleTableSlot *base_slot = pts->base_slot;
-	TupleTableSlot *scan_slot = pts->css.ss.ss_ScanTupleSlot;
-	size_t			fallback_index_saved = pts->fallback_index;
-	ListCell	   *lc1, *lc2;
-
-	/* Load the base tuple (depth-0) to the fallback slot */
-	ExecForceStoreHeapTuple(tuple, base_slot, false);
-	slot_getallattrs(base_slot);
-	ExecStoreAllNullTuple(scan_slot);
-	forboth (lc1, pts->fallback_load_src,
-			 lc2, pts->fallback_load_dst)
-	{
-		int		src = lfirst_int(lc1) - 1;
-		int		dst = lfirst_int(lc2) - 1;
-
-		scan_slot->tts_isnull[dst] = base_slot->tts_isnull[src];
-		scan_slot->tts_values[dst] = base_slot->tts_values[src];
-	}
-	econtext->ecxt_scantuple = scan_slot;
-
-	/* check WHERE-clause if any */
-	if (pts->base_quals)
-	{
-		ResetExprContext(econtext);
-		if (!ExecQual(pts->base_quals, econtext))
-			return 0;
-	}
-	/* Run JOIN, if any */
-	__execFallbackCpuJoinOneDepth(pts, 1);
-	return (pts->fallback_index -  fallback_index_saved > 0);
-}
-
-static void
-__execFallbackCpuJoinRightOuterOneDepth(pgstromTaskState *pts, int depth)
-{
-	pgstromTaskInnerState *istate = &pts->inners[depth-1];
-	ExprContext		   *econtext = pts->css.ss.ps.ps_ExprContext;
-	TupleTableSlot	   *fallback_slot = pts->css.ss.ss_ScanTupleSlot;
-	kern_multirels	   *h_kmrels = pts->h_kmrels;
-	kern_data_store	   *kds_in = KERN_MULTIRELS_INNER_KDS(h_kmrels, depth-1);
-	bool			   *oj_map = KERN_MULTIRELS_OUTER_JOIN_MAP(h_kmrels, depth-1);
-
-	Assert(oj_map != NULL);
-
-	ExecStoreAllNullTuple(fallback_slot);
-	econtext->ecxt_scantuple = fallback_slot;
-	for (uint32_t i=0; i < kds_in->nitems; i++)
-	{
-		if (oj_map[i])
-			continue;
-		if (istate->inner_load_src != NIL &&
-			istate->inner_load_dst != NIL)
-		{
-			kern_tupitem   *titem = KDS_GET_TUPITEM(kds_in, i);
-			ItemPointerData	t_self;
-
-			if (!titem)
-				continue;
-			ItemPointerSetInvalid(&t_self);
-			__execFallbackLoadVarsSlot(fallback_slot,
-									   istate->inner_load_src,
-									   istate->inner_load_dst,
-									   kds_in,
-									   &t_self,
-									   &titem->htup);
-		}
-		if (istate->other_quals && !ExecQual(istate->other_quals, econtext))
-			continue;
-		__execFallbackCpuJoinOneDepth(pts, depth+1);
-	}
-}
-
 void
-ExecFallbackCpuJoinRightOuter(pgstromTaskState *pts)
+GpuJoinInnerPreloadAfterWorks(pgstromTaskState *pts)
 {
-	uint32_t	count;
-
-	count = pg_atomic_add_fetch_u32(pts->rjoin_exit_count, 1);
-	//TODO: use sibling count if partitioned join
-	if (count == 1)
+	for (int i=0; i < pts->num_rels; i++)
 	{
-		for (int depth=1; depth <= pts->num_rels; depth++)
+		pgstromTaskInnerState *istate = &pts->inners[i];
+
+		/*
+		 * Once inner hash/heap join buffer was built, we no longer need
+		 * the final buffer of the inner child GpuScan/GpuJoin, because
+		 * it is already reconstructed as a part of partitioned inner-buffer,
+		 * or parent GpuJoin acquired gpuQueryBuffer if zero-copy mode.
+		 *
+		 * Even though the final buffer is allocated as CUDA managed memory,
+		 * some portion still occupies device memory, and eviction consumes
+		 * unnecessary host memory and PCI-E bandwidth, so early release will
+		 * reduce host/device memory pressure.
+		 *
+		 * But here is one exception. When divisor of inner-buffer partitions
+		 * is larger than the number of GPU devices, this final buffer shall
+		 * be reused for the inner buffer reconstruction.
+		 */
+		if (istate->inner_pinned_buffer)
 		{
-			JoinType	join_type = pts->inners[depth-1].join_type;
+			pgstromTaskState   *i_pts = (pgstromTaskState *)istate->ps;
 
-			if (join_type == JOIN_RIGHT || join_type == JOIN_FULL)
-				__execFallbackCpuJoinRightOuterOneDepth(pts, depth);
+			Assert(pgstrom_is_gpuscan_state(istate->ps) ||
+				   pgstrom_is_gpujoin_state(istate->ps));
+			if (i_pts->conn)
+			{
+				xpuClientCloseSession(i_pts->conn);
+				i_pts->conn = NULL;
+			}
 		}
-	}
-}
-
-void
-ExecFallbackCpuJoinOuterJoinMap(pgstromTaskState *pts, XpuCommand *resp)
-{
-	kern_multirels *h_kmrels = pts->h_kmrels;
-	bool	   *ojmap_resp = (bool *)((char *)resp + resp->u.results.ojmap_offset);
-
-	Assert(resp->u.results.ojmap_offset +
-		   resp->u.results.ojmap_length <= resp->length);
-	for (int depth=1; depth <= pts->num_rels; depth++)
-	{
-		kern_data_store *kds_in = KERN_MULTIRELS_INNER_KDS(h_kmrels, depth-1);
-		bool   *ojmap_curr = KERN_MULTIRELS_OUTER_JOIN_MAP(h_kmrels, depth-1);
-
-		if (!ojmap_curr)
-			continue;
-
-		for (uint32_t i=0; i < kds_in->nitems; i++)
-		{
-			ojmap_curr[i] |= ojmap_resp[i];
-		}
-		ojmap_resp += MAXALIGN(sizeof(bool) * kds_in->nitems);
 	}
 }
 
@@ -2804,6 +2997,43 @@ pgstrom_init_gpu_join(void)
 							 PGC_USERSET,
 							 GUC_NOT_IN_SAMPLE,
 							 NULL, NULL, NULL);
+	/* threshold of pinned inner buffer of GpuJoin */
+	DefineCustomIntVariable("pg_strom.pinned_inner_buffer_threshold",
+							"Threshold of pinned inner buffer of GpuJoin",
+							NULL,
+							&__pinned_inner_buffer_threshold_mb,
+							0,		/* disabled */
+							0,		/* 0 means disabled */
+							INT_MAX,
+							PGC_SUSET,
+							GUC_NOT_IN_SAMPLE | GUC_UNIT_MB,
+							NULL, NULL, NULL);
+	/* unit size of partitioned pinned inner buffer of GpuJoin
+	 * default: 90% of usable DRAM for high-end GPUs,
+	 *          80% of usable DRAM for middle-end GPUs.
+	 */
+	for (int i=0; i < numGpuDevAttrs; i++)
+	{
+		size_t	dram_sz = gpuDevAttrs[i].DEV_TOTAL_MEMSZ;
+		size_t	part_sz;
+
+		if (dram_sz >= (32UL<<30))
+			part_sz = ((dram_sz - (2UL<<30)) * 9 / 10) >> 20;
+		else
+			part_sz = ((dram_sz - (1UL<<30)) * 8 / 10) >> 20;
+		if (i==0 || part_sz < __pinned_inner_buffer_partition_size_mb)
+			__pinned_inner_buffer_partition_size_mb = part_sz;
+	}
+	DefineCustomIntVariable("pg_strom.pinned_inner_buffer_partition_size",
+							"Unit size of partitioned pinned inner buffer of GpuJoin",
+							NULL,
+							&__pinned_inner_buffer_partition_size_mb,
+							__pinned_inner_buffer_partition_size_mb,
+							1024,	/* 1GB */
+							INT_MAX,
+							PGC_SUSET,
+							GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE | GUC_UNIT_MB,
+							NULL, NULL, NULL);
 	/* setup path methods */
 	memset(&gpujoin_path_methods, 0, sizeof(CustomPathMethods));
 	gpujoin_path_methods.CustomName				= "GpuJoin";

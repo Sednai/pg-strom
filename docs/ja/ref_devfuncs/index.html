@@ -61,6 +61,8 @@
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../postgis/">GPU版PostGIS</a>
                   </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../gpusort/">GPUソート</a>
+                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../troubles/">トラブルシューティング</a>
                   </li>
               </ul>
@@ -72,6 +74,8 @@
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../gpucache/">GPUキャッシュ</a>
                   </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../pinned_buffer/">Pinned Inner Buffer</a>
+                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../fluentd/">Fluentd連携</a>
                   </li>
               </ul>
@@ -79,7 +83,7 @@
               <ul class="current">
                   <li class="toctree-l1"><a class="reference internal" href="../ref_types/">データ型</a>
                   </li>
-                  <li class="toctree-l1 current"><a class="reference internal current" href="./">関数と演算子</a>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">関数と演算子</a>
     <ul class="current">
     <li class="toctree-l2"><a class="reference internal" href="#_2">型キャスト</a>
     </li>
@@ -105,6 +109,8 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#cube">CUBE型関数</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#vcf">VCF検索関数</a>
+    </li>
     </ul>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../ref_sqlfuncs/">SQLオブジェクト</a>
@@ -114,6 +120,10 @@
               </ul>
               <p class="caption"><span class="caption-text">リリースノート</span></p>
               <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../release_v6.0/">PG-Strom v6.0</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../release_v5.2/">PG-Strom v5.2</a>
+                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../release_v5.1/">PG-Strom v5.1</a>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../release_v5.0/">PG-Strom v5.0</a>
@@ -549,6 +559,27 @@ PG-Stromは<code>jsonb -&gt;&gt; KEY</code>演算子による参照とテキス�
 <dt><code>float8 cube_ll_coord(cube, int4)</code></dt>
 <dd>立体の左下隅のn次座標の値を返します。</dd>
 </dl>
+<h2 id="vcf">VCF検索関数</h2>
+<dl>
+<dt><code>text vcf_variant_getattr(text, text)</code></dt>
+<dd>第一引数を':'区切りのトークン列と見なして、第二引数で指定された<code>KEY=</code>以降の文字列を返す。</dd>
+</dl>
+<pre><code>=# SELECT vcf_variant_getattr('ABC=123:NM=this is a pen:XYZ=3.1415', 'NM');
+ vcf_variant_getattr
+---------------------
+ this is a pen
+(1 row)
+</code></pre>
+<dl>
+<dt><code>text vcf_info_getattr(text, text)</code></dt>
+<dd>第一引数を';'区切りのトークン列と見なして、第二引数で指定された<code>KEY=</code>以降の文字列を返す。</dd>
+</dl>
+<pre><code>=# SELECT vcf_info_getattr('ABC=123;NM=this is a pen;XYZ=3.1415', 'XYZ');
+ vcf_info_getattr
+------------------
+ 3.141
+(1 row)
+</code></pre>
               
             </div>
           </div><footer>

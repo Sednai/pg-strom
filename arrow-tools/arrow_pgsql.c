@@ -146,6 +146,15 @@ static inline uint16_t __fetch_16bit(const void *addr)
 #endif
 }
 
+static inline int16_t __fetch_16bit_signed(const void *addr)
+{
+#ifdef __PGSTROM_MODULE__
+	return *((int16_t *)addr);
+#else
+	return (int16_t)be16toh(*((uint16_t *)addr));
+#endif
+}
+
 static inline uint32_t __fetch_32bit(const void *addr)
 {
 #ifdef __PGSTROM_MODULE__
@@ -497,9 +506,11 @@ put_float64_value(SQLfield *column, const char *addr, int sz)
 /* parameters of Numeric type */
 #define NUMERIC_DSCALE_MASK	0x3FFF
 #define NUMERIC_SIGN_MASK	0xC000
-#define NUMERIC_POS         0x0000
+#define NUMERIC_POS			0x0000
 #define NUMERIC_NEG         0x4000
-#define NUMERIC_NAN         0xC000
+#define NUMERIC_NAN			0xC000
+#define NUMERIC_PINF		0xD000
+#define NUMERIC_NINF		0xF000
 
 #define NBASE				10000
 #define HALF_NBASE			5000
@@ -592,14 +603,13 @@ put_decimal_value(SQLfield *column, const char *addr, int sz)
 			NumericDigit digits[FLEXIBLE_ARRAY_MEMBER];
 		}  *rawdata = (void *)addr;
 		nv.ndigits	= __fetch_16bit(&rawdata->ndigits);
-		nv.weight	= __fetch_16bit(&rawdata->weight);
+		nv.weight	= __fetch_16bit_signed(&rawdata->weight);
 		nv.sign		= __fetch_16bit(&rawdata->sign);
 		nv.dscale	= __fetch_16bit(&rawdata->dscale);
 		nv.digits	= rawdata->digits;
 #endif	/* __PGSTROM_MODULE__ */
-		if ((nv.sign & NUMERIC_SIGN_MASK) == NUMERIC_NAN)
-			Elog("Decimal128 cannot map NaN in PostgreSQL Numeric");
-
+		if ((nv.sign & NUMERIC_SIGN_MASK) == NUMERIC_SIGN_MASK)
+			Elog("Decimal128 cannot map NaN, +Inf or -Inf in PostgreSQL Numeric");
 		/* makes integer portion first */
 		for (d=0; d <= nv.weight; d++)
 		{
@@ -662,8 +672,8 @@ put_decimal_value(SQLfield *column, const char *addr, int sz)
 	}
 MOVE_SCALAR_TEMPLATE(int8,     int8_t,  i8)
 MOVE_SCALAR_TEMPLATE(uint8,   uint8_t,  u8)
-MOVE_SCALAR_TEMPLATE(int16,   int32_t, i32)
-MOVE_SCALAR_TEMPLATE(uint16, uint32_t, u32)
+MOVE_SCALAR_TEMPLATE(int16,   int16_t, i16)
+MOVE_SCALAR_TEMPLATE(uint16, uint16_t, u16)
 MOVE_SCALAR_TEMPLATE(int32,   int32_t, i32)
 MOVE_SCALAR_TEMPLATE(uint32, uint32_t, u32)
 MOVE_SCALAR_TEMPLATE(int64,   int64_t, i64)
@@ -1982,13 +1992,13 @@ assignArrowTypeExtraCube(SQLfield *column, ArrowField *arrow_field)
 static void
 __assignArrowTypeHint(SQLfield *column,
 					  const char *typname,
-					  const char *typnamespace)
+					  const char *typnamespace,
+					  const char *typextension)
 {
-	int			index = column->numCustomMetadata++;
+	int		index = column->numCustomMetadata++;
 	ArrowKeyValue *kv;
-	const char *pos;
-	char		buf[200];
-	int			sz = 0;
+	char	buf[300];
+	int		sz = 0;
 
 	if (!column->customMetadata)
 		column->customMetadata = palloc(sizeof(ArrowKeyValue) * (index+1));
@@ -2000,22 +2010,20 @@ __assignArrowTypeHint(SQLfield *column,
 	kv->key = pstrdup("pg_type");
 	kv->_key_len = 7;
 
-	/* '.' must be escaped */
-	for (pos = typnamespace; *pos != '\0'; pos++)
+	if (!typextension && strcmp(typnamespace, "pg_catalog") != 0)
 	{
-		if (*pos == '.')
-			buf[sz++] = '\\';
-		buf[sz++] = *pos;
+		strcpy(buf+sz, typnamespace);
+		sz += strlen(typnamespace);
+		buf[sz++] = '.';
 	}
-	buf[sz++] = '.';
-	for (pos = typname; *pos != '\0'; pos++)
+	strcpy(buf+sz, typname);
+	sz += strlen(typname);
+	if (typextension)
 	{
-		if (*pos == '.')
-			buf[sz++] = '\\';
-		buf[sz++] = *pos;
+		buf[sz++] = '@';
+		strcpy(buf+sz, typextension);
+		sz += strlen(typextension);
 	}
-	buf[sz] = '\0';
-
 	kv->value = pstrdup(buf);
 	kv->_value_len = sz;
 }
@@ -2038,7 +2046,6 @@ assignArrowTypePgSQL(SQLfield *column,
 					 Oid typelemid,
 					 const char *tz_name,
 					 const char *extname,
-					 const char *extschema,
 					 ArrowField *arrow_field)
 {
 	SQLtype__pgsql	   *pgtype = &column->sql_type.pgsql;
@@ -2072,14 +2079,14 @@ assignArrowTypePgSQL(SQLfield *column,
 	/* composite type */
 	if (typrelid != 0)
 	{
-		__assignArrowTypeHint(column, typname, typnamespace);
+		__assignArrowTypeHint(column, typname, typnamespace, NULL);
 		return assignArrowTypeStruct(column, arrow_field);
 	}
 
 	/* enum type */
 	if (typtype == 'e')
 	{
-		__assignArrowTypeHint(column, typname, typnamespace);
+		__assignArrowTypeHint(column, typname, typnamespace, NULL);
 		return assignArrowTypeDictionary(column, arrow_field);
 	}
 
@@ -2088,10 +2095,9 @@ assignArrowTypePgSQL(SQLfield *column,
 	{
 		/* contrib/cube (relocatable) */
 		if (strcmp(typname, "cube") == 0 &&
-			strcmp(extname, "cube") == 0 &&
-			strcmp(extschema, typnamespace) == 0)
+			strcmp(extname, "cube") == 0)
 		{
-			__assignArrowTypeHint(column, typname, typnamespace);
+			__assignArrowTypeHint(column, typname, typnamespace, extname);
 			return assignArrowTypeExtraCube(column, arrow_field);
 		}
 	}
@@ -2158,7 +2164,7 @@ assignArrowTypePgSQL(SQLfield *column,
 			typlen == sizeof(int) ||
 			typlen == sizeof(double))
 		{
-			__assignArrowTypeHint(column, typname, typnamespace);
+			__assignArrowTypeHint(column, typname, typnamespace, NULL);
 			return assignArrowTypeInt(column, false, arrow_field);
 		}
 		/*
@@ -2172,7 +2178,7 @@ assignArrowTypePgSQL(SQLfield *column,
 	}
 	else if (typlen == -1)
 	{
-		__assignArrowTypeHint(column, typname, typnamespace);
+		__assignArrowTypeHint(column, typname, typnamespace, NULL);
 		return assignArrowTypeBinary(column, arrow_field);
 	}
 	Elog("PostgreSQL type: '%s' is not supported", typname);

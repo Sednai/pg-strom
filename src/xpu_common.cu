@@ -290,14 +290,25 @@ kern_extract_arrow_tuple(kern_context *kcxt,
 		const kern_colmeta *cmeta = &kds->colmeta[vl_desc->vl_resno-1];
 		uint16_t	slot_id = vl_desc->vl_slot_id;
 
-		if (!__kern_extract_arrow_field(kcxt,
-										kds,
-										cmeta,
-										kds_index,
-										&kcxt->kvars_desc[slot_id],
-										kcxt->kvars_slot[slot_id]))
-			return false;
+		if (cmeta->virtual_offset != 0)
+		{
+			/* virtual column is immutable for each KDS */
+			const char *addr = NULL;
 
+			if (cmeta->virtual_offset > 0)
+				addr = ((char *)kds + cmeta->virtual_offset);
+			if (!__extract_heap_tuple_attr(kcxt, slot_id, addr))
+				return false;
+		}
+		else if (!__kern_extract_arrow_field(kcxt,
+											 kds,
+											 cmeta,
+											 kds_index,
+											 &kcxt->kvars_desc[slot_id],
+											 kcxt->kvars_slot[slot_id]))
+		{
+			return false;
+		}
 		vl_desc++;
 		vload_count++;
 	}
@@ -940,31 +951,29 @@ pgfn_ScalarArrayOp(XPU_PGFUNCTION_ARGS)
  * ----------------------------------------------------------------
  */
 PUBLIC_FUNCTION(int)
-kern_form_heaptuple(kern_context *kcxt,
-					const kern_expression *kexp_proj,
-					const kern_data_store *kds_dst,
-					HeapTupleHeaderData *htup)
+__kern_form_heaptuple(kern_context *kcxt,
+					  int proj_nattrs,
+					  const uint16_t *proj_slot_id,
+					  const kern_data_store *kds_dst,
+					  HeapTupleHeaderData *htup)
 {
 	/*
 	 * NOTE: the caller must call kern_estimate_heaptuple() preliminary to ensure
 	 *       kcxt->kvars_slot[] are filled-up by the scalar values to be written.
 	 */
-	int			nattrs = kexp_proj->u.proj.nattrs;
 	uint32_t	t_hoff;
 	uint16_t	t_infomask = 0;
 	bool		t_hasnull = false;
 
-	if (kds_dst && kds_dst->ncols < nattrs)
-		nattrs = kds_dst->ncols;
+	if (kds_dst && kds_dst->ncols < proj_nattrs)
+		proj_nattrs = kds_dst->ncols;
 	/* has any NULL attributes? */
-	for (int j=0; j < nattrs; j++)
+	for (int j=0; j < proj_nattrs; j++)
 	{
-		uint16_t		slot_id = kexp_proj->u.proj.slot_id[j];
-		xpu_datum_t	   *xdatum;
+		uint16_t		slot_id = proj_slot_id[j];
 
-		assert(slot_id < kcxt->kvars_nslots);
-		xdatum = kcxt->kvars_slot[slot_id];
-		if (XPU_DATUM_ISNULL(xdatum))
+		if (slot_id >= kcxt->kvars_nslots ||
+			XPU_DATUM_ISNULL(kcxt->kvars_slot[slot_id]))
 		{
 			t_infomask |= HEAP_HASNULL;
 			t_hasnull = true;
@@ -974,7 +983,7 @@ kern_form_heaptuple(kern_context *kcxt,
 	/* set up headers */
 	t_hoff = offsetof(HeapTupleHeaderData, t_bits);
 	if (t_hasnull)
-		t_hoff += BITMAPLEN(nattrs);
+		t_hoff += BITMAPLEN(proj_nattrs);
 	t_hoff = MAXALIGN(t_hoff);
 
 	if (htup)
@@ -985,20 +994,21 @@ kern_form_heaptuple(kern_context *kcxt,
 		htup->t_ctid.ip_blkid.bi_hi = 0xffff;	/* InvalidBlockNumber */
 		htup->t_ctid.ip_blkid.bi_lo = 0xffff;
 		htup->t_ctid.ip_posid = 0;				/* InvalidOffsetNumber */
-		htup->t_infomask2 = (nattrs & HEAP_NATTS_MASK);
+		htup->t_infomask2 = (proj_nattrs & HEAP_NATTS_MASK);
 		htup->t_hoff = t_hoff;
 	}
 
 	/* walks on the source attributes */
-	for (int j=0; j < nattrs; j++)
+	for (int j=0; j < proj_nattrs; j++)
 	{
 		const kern_colmeta *cmeta_dst = &kds_dst->colmeta[j];
-		uint16_t		slot_id = kexp_proj->u.proj.slot_id[j];
+		uint16_t		slot_id = proj_slot_id[j];
 		xpu_datum_t	   *xdatum;
 		int				sz, t_next;
 		char		   *buffer = NULL;
 
-		assert(slot_id < kcxt->kvars_nslots);
+		if (slot_id >= kcxt->kvars_nslots)
+			continue;	/* considered as NULL */
 		xdatum = kcxt->kvars_slot[slot_id];
 		if (!XPU_DATUM_ISNULL(xdatum))
 		{
@@ -1039,6 +1049,19 @@ kern_form_heaptuple(kern_context *kcxt,
 	return t_hoff;	
 }
 
+PUBLIC_FUNCTION(int)
+kern_form_heaptuple(kern_context *kcxt,
+					const kern_expression *kexp_proj,
+					const kern_data_store *kds_dst,
+					HeapTupleHeaderData *htup)
+{
+	return __kern_form_heaptuple(kcxt,
+								 kexp_proj->u.proj.nattrs,
+								 kexp_proj->u.proj.slot_id,
+								 kds_dst,
+								 htup);
+}
+
 EXTERN_FUNCTION(int)
 kern_estimate_heaptuple(kern_context *kcxt,
                         const kern_expression *kexp_proj,
@@ -1073,6 +1096,70 @@ kern_estimate_heaptuple(kern_context *kcxt,
 	if (sz < 0)
 		return -1;
 	return MAXALIGN(offsetof(kern_tupitem, htup) + sz);
+}
+
+/*
+ * kern_fetch_heaptuple_addr
+ */
+PUBLIC_FUNCTION(const void *)
+kern_fetch_heaptuple_attr(kern_context *kcxt,
+						  const kern_data_store *kds,
+						  const kern_tupitem *titem, int anum)
+{
+	const HeapTupleHeaderData *htup = &titem->htup;
+	const uint8_t  *nullmap = NULL;
+	uint32_t		ncols = (htup->t_infomask2 & HEAP_NATTS_MASK);
+
+	/* special case if system attribute reference */
+	if (anum < 0)
+	{
+		switch (anum)
+		{
+			case SelfItemPointerAttributeNumber:
+				return &htup->t_ctid;
+			case MinTransactionIdAttributeNumber:
+				return &htup->t_choice.t_heap.t_xmin;
+			case MinCommandIdAttributeNumber:
+			case MaxCommandIdAttributeNumber:
+				return &htup->t_choice.t_heap.t_field3.t_cid;
+			case MaxTransactionIdAttributeNumber:
+				return &htup->t_choice.t_heap.t_xmax;
+			case TableOidAttributeNumber:
+				return &kds->table_oid;
+			default:
+				return NULL;
+		}
+	}
+	/* walk on the user columns */
+	ncols = Min(ncols, kds->ncols);
+	if ((htup->t_infomask & HEAP_HASNULL) != 0)
+		nullmap = htup->t_bits;
+	if (anum > 0 && anum <= ncols)
+	{
+		uint32_t	offset = htup->t_hoff;
+		const char *addr;
+
+		anum--;
+		for (int j=0; j <= anum; j++)
+		{
+			const kern_colmeta *cmeta = &kds->colmeta[j];
+
+			if (nullmap && att_isnull(j, nullmap))
+				continue;
+			if (cmeta->attlen > 0)
+				offset = TYPEALIGN(cmeta->attalign, offset);
+			else if (!VARATT_NOT_PAD_BYTE((char *)htup + offset))
+				offset = TYPEALIGN(cmeta->attalign, offset);
+			addr = ((const char *)htup + offset);
+			if (j == anum)
+				return addr;
+			if (cmeta->attlen > 0)
+				offset += cmeta->attlen;
+			else
+				offset += VARSIZE_ANY(addr);
+		}
+	}
+	return NULL;
 }
 
 STATIC_FUNCTION(bool)
@@ -1154,11 +1241,27 @@ pgfn_SaveExpr(XPU_PGFUNCTION_ARGS)
 STATIC_FUNCTION(bool)
 pgfn_JoinQuals(XPU_PGFUNCTION_ARGS)
 {
-	const kern_expression *karg;
-	xpu_int4_t *result = (xpu_int4_t *)__result;
-	int			i, status = 1;
+	STROM_ELOG(kcxt, "pgfn_JoinQuals should not be called as a normal kernel expression");
+	return false;
+}
 
-	assert(kexp->exptype == TypeOpCode__bool);
+/*
+ * ExecGpuJoinQuals - runs JoinQuals operator.
+ *   result =  1 : matched to JoinQuals
+ *          =  0 : unmatched to JoinQuals
+ *          = -1 : matched to JoinQuals, but unmatched to any of other quals
+ *                 --> don't generate inner join row, but set outer-join-map.
+ */
+PUBLIC_FUNCTION(bool)
+ExecGpuJoinQuals(kern_context *kcxt,
+				 const kern_expression *kexp,
+				 int *p_status)
+{
+	const kern_expression *karg;
+	int		i, status = 1;
+
+	assert(kexp->opcode  == FuncOpCode__JoinQuals &&
+		   kexp->exptype == TypeOpCode__bool);
 	for (i=0, karg = KEXP_FIRST_ARG(kexp);
 		 i < kexp->nr_args;
 		 i++, karg = KEXP_NEXT_ARG(karg))
@@ -1186,8 +1289,42 @@ pgfn_JoinQuals(XPU_PGFUNCTION_ARGS)
 			status = -1;
 		}
 	}
-	result->expr_ops = kexp->expr_ops;
-	result->value = status;
+	*p_status = status;
+	return true;
+}
+
+/*
+ * ExecGpuJoinOtherQuals - runs OtherQuals in the JoinQuals if any.
+ *   it is usually used in validation of RIGHT OUTER JOIN row.
+ */
+PUBLIC_FUNCTION(bool)
+ExecGpuJoinOtherQuals(kern_context *kcxt,
+					  const kern_expression *kexp,
+					  bool *p_status)
+{
+	const kern_expression *karg;
+	bool	status = true;
+	int		i;
+
+	assert(kexp->opcode  == FuncOpCode__JoinQuals &&
+		   kexp->exptype == TypeOpCode__bool);
+	for (i=0, karg = KEXP_FIRST_ARG(kexp);
+		 i < kexp->nr_args;
+		 i++, karg = KEXP_NEXT_ARG(karg))
+	{
+		xpu_bool_t	datum;
+
+		if ((karg->expflags & KEXP_FLAG__IS_PUSHED_DOWN) == 0)
+			continue;
+		if (!EXEC_KERN_EXPRESSION(kcxt, karg, &datum))
+			return false;
+		if (XPU_DATUM_ISNULL(&datum) || !datum.value)
+		{
+			status = false;
+			break;
+		}
+	}
+	*p_status = status;
 	return true;
 }
 
@@ -1212,6 +1349,13 @@ pgfn_AggFuncs(XPU_PGFUNCTION_ARGS)
 	return false;
 }
 
+STATIC_FUNCTION(bool)
+pgfn_SortKeys(XPU_PGFUNCTION_ARGS)
+{
+	STROM_ELOG(kcxt, "pgfn_SortKeys should not be called as a normal kernel expression");
+	return false;
+}
+
 /* ------------------------------------------------------------
  *
  * Extract GpuCache tuples
@@ -1233,7 +1377,7 @@ __extract_gpucache_tuple_sysattr(kern_context *kcxt,
 		   cmeta->attlen == sizeof(GpuCacheSysattr) &&
 		   cmeta->nullmap_offset == 0);		/* NOT NULL */
 	sysatt = (GpuCacheSysattr *)
-		((char *)kds + __kds_unpack(cmeta->values_offset));
+		((char *)kds + cmeta->values_offset);
 	switch (vl_desc->vl_resno)
 	{
 		case SelfItemPointerAttributeNumber:
@@ -1295,7 +1439,7 @@ kern_extract_gpucache_tuple(kern_context *kcxt,
 		if (!KDS_COLUMN_ITEM_ISNULL(kds, cmeta, kds_index))
 		{
 			/* base pointer */
-			addr = ((const char *)kds + __kds_unpack(cmeta->values_offset));
+			addr = ((const char *)kds + cmeta->values_offset);
 
 			if (cmeta->attlen > 0)
 			{
@@ -1303,8 +1447,7 @@ kern_extract_gpucache_tuple(kern_context *kcxt,
 			}
 			else
 			{
-				addr = ((char *)extra +
-						__kds_unpack(((uint32_t *)addr)[kds_index]));
+				addr = ((char *)extra + ((uint64_t *)addr)[kds_index]);
 			}
 		}
 		else
@@ -1381,7 +1524,7 @@ ExecLoadVarsOuterRow(kern_context *kcxt,
 			if (!XPU_DATUM_ISNULL(&retval) && retval.value)
 				return true;
 		}
-		else
+		else if (!HandleErrorIfCpuFallback(kcxt, 0, 0, false))
 		{
 			assert(kcxt->errcode != ERRCODE_STROM_SUCCESS);
 		}
@@ -1420,7 +1563,7 @@ ExecLoadVarsOuterArrow(kern_context *kcxt,
 			if (!XPU_DATUM_ISNULL(&retval) && retval.value)
 				return true;
 		}
-		else
+		else if (!HandleErrorIfCpuFallback(kcxt, 0, 0, false))
 		{
 			assert(kcxt->errcode != ERRCODE_STROM_SUCCESS);
 		}
@@ -1461,11 +1604,65 @@ ExecLoadVarsOuterColumn(kern_context *kcxt,
 			if (!XPU_DATUM_ISNULL(&retval) && retval.value)
 				return true;
 		}
-		else
+		else if (!HandleErrorIfCpuFallback(kcxt, 0, 0, false))
 		{
 			assert(kcxt->errcode != ERRCODE_STROM_SUCCESS);
 		}
 		return false;
+	}
+	return true;
+}
+
+PUBLIC_FUNCTION(bool)
+ExecLoadKeysFromGroupByFinal(kern_context *kcxt,
+							 const kern_data_store *kds_final,
+							 const kern_tupitem *tupitem,
+							 const kern_expression *kexp_groupby_actions)
+{
+	const char *pos = NULL;
+	const uint8_t *nullmap = NULL;
+	int			ncols = 0;
+
+	if (tupitem)
+	{
+		if ((tupitem->htup.t_infomask & HEAP_HASNULL) != 0)
+			nullmap = tupitem->htup.t_bits;
+		ncols = (tupitem->htup.t_infomask2 & HEAP_NATTS_MASK);
+		pos = (const char *)&tupitem->htup + tupitem->htup.t_hoff;
+	}
+	ncols = Min(kds_final->ncols, ncols);
+	for (int j=0; j < kexp_groupby_actions->u.pagg.nattrs; j++)
+	{
+		const kern_aggregate_desc *desc = &kexp_groupby_actions->u.pagg.desc[j];
+		const kern_colmeta *cmeta = &kds_final->colmeta[j];
+
+		if (j >= ncols || (nullmap && att_isnull(j, nullmap)))
+		{
+			if (desc->action == KAGG_ACTION__VREF)
+			{
+				if (!__extract_heap_tuple_attr(kcxt, desc->arg0_slot_id, NULL))
+					return false;
+			}
+		}
+		else
+		{
+			assert(pos != NULL);
+			pos = (char *)TYPEALIGN(cmeta->attalign, pos);
+			if (desc->action == KAGG_ACTION__VREF)
+			{
+				if (!__extract_heap_tuple_attr(kcxt, desc->arg0_slot_id, pos))
+					return false;
+			}
+			if (cmeta->attlen > 0)
+				pos += cmeta->attlen;
+			else if (cmeta->attlen == -1)
+				pos += VARSIZE_ANY(pos);
+			else
+			{
+				STROM_ELOG(kcxt, "unknown attribute length");
+				return false;
+			}
+		}
 	}
 	return true;
 }
@@ -1557,6 +1754,148 @@ ExecMoveKernelVariables(kern_context *kcxt,
 	return true;
 }
 
+
+/* ------------------------------------------------------------
+ *
+ * Routines to support CPU Fallback
+ *
+ * ------------------------------------------------------------
+ */
+STATIC_FUNCTION(bool)
+__writeOutCpuFallbackTuple(kern_context *kcxt,
+						   int fallback_nattrs,
+						   uint16_t *fallback_slots,
+						   int depth,
+						   uint64_t l_state,
+						   bool matched)
+{
+	kern_data_store *kds_fallback = kcxt->kds_fallback;
+	kern_fallbackitem *fbitem;
+	uint64_t	__usage;
+	uint32_t	__nitems_old;
+	uint32_t	__nitems_cur;
+	uint32_t	__nitems_new;
+	int			reqsz;
+	int			tupsz;
+
+	/* estimate length of the fallback tuple */
+	tupsz = __kern_form_heaptuple(kcxt,
+								  fallback_nattrs,
+								  fallback_slots,
+								  kds_fallback,
+								  NULL);
+	if (tupsz < 0)
+	{
+		STROM_ELOG(kcxt, "fallback: unable to compute tuple size");
+		return false;
+	}
+	reqsz = MAXALIGN(offsetof(kern_fallbackitem, htup) + tupsz);
+	/* allocation of fallback buffer */
+	__usage = __atomic_add_uint64(&kds_fallback->usage, reqsz);
+	__usage += reqsz;
+	__nitems_cur = __volatileRead(&kds_fallback->nitems);
+	do {
+		__nitems_old = __nitems_cur;
+		__nitems_new = __nitems_cur + 1;
+		if (!__KDS_CHECK_OVERFLOW(kds_fallback,
+								  __nitems_new,
+								  __usage))
+		{
+			/* needs expand the fallback buffer */
+			return false;
+		}
+	} while ((__nitems_cur = __atomic_cas_uint32(&kds_fallback->nitems,
+												 __nitems_old,
+												 __nitems_new)) != __nitems_old);
+	/* write out the fallback tuple */
+	assert(depth >= 0 && depth <= USHRT_MAX);
+	fbitem = (kern_fallbackitem *)((char *)kds_fallback
+								   + kds_fallback->length
+								   - __usage);
+	fbitem->t_len = tupsz;
+	fbitem->depth = depth;
+	fbitem->matched = matched;
+	fbitem->l_state = l_state;
+	__kern_form_heaptuple(kcxt,
+						  fallback_nattrs,
+						  fallback_slots,
+						  kcxt->kds_fallback,
+						  &fbitem->htup);
+	KDS_GET_ROWINDEX(kds_fallback)[__nitems_old] = __usage;
+
+	return true;
+}
+
+PUBLIC_FUNCTION(bool)
+HandleErrorIfCpuFallback(kern_context *kcxt,
+						 int depth,
+						 uint64_t l_state,
+						 bool matched)
+{
+	if (kcxt->errcode == ERRCODE_SUSPEND_FALLBACK &&
+		kcxt->kds_fallback != NULL)
+	{
+		kern_session_info *session = kcxt->session;
+		kern_data_store   *kds_fallback = kcxt->kds_fallback;
+		int			fallback_ncols = kds_fallback->ncols;
+		kern_fallback_desc *fb_desc_array = (kern_fallback_desc *)
+			((char *)session + session->fallback_desc_defs);
+		int			fallback_nitems = session->fallback_desc_nitems;
+		uint16_t   *fallback_slots = (uint16_t *)
+			alloca(sizeof(uint16_t) * fallback_ncols);
+		assert(session->fallback_desc_defs > 0);
+
+		/*
+		 * Load variables from the kvec-buffer (if depth>0)
+		 */
+		memset(fallback_slots, -1, sizeof(uint16_t) * fallback_ncols);
+		for (int j=0; j < fallback_nitems; j++)
+		{
+			kern_fallback_desc *fb_desc = &fb_desc_array[j];
+			int		slot_id = fb_desc->fb_slot_id;
+
+			assert(slot_id >= 0 && slot_id < kcxt->kvars_nslots);
+			assert(fb_desc->fb_dst_resno > 0 &&
+				   fb_desc->fb_dst_resno <= kds_fallback->ncols);
+			if (depth >  fb_desc->fb_src_depth &&
+				depth <= fb_desc->fb_max_depth)
+			{
+				const kern_varslot_desc *vs_desc = &kcxt->kvars_desc[slot_id];
+				const kvec_datum_t *kvecs = (const kvec_datum_t *)
+					((char *)kcxt->kvecs_curr_buffer + vs_desc->vs_offset);
+
+				assert(vs_desc->vs_offset >= 0 &&
+					   vs_desc->vs_offset < kcxt->kvecs_bufsz);
+				if (!vs_desc->vs_ops->xpu_datum_kvec_load(kcxt,
+														  kvecs,
+														  kcxt->kvecs_curr_id,
+														  kcxt->kvars_slot[slot_id]))
+				{
+					STROM_ELOG(kcxt, "fallback: unable to load variables");
+					return false;
+				}
+			}
+			else if (depth != 0 || fb_desc->fb_src_depth != 0)
+			{
+				/* depth==0 is already loaded by the caller */
+				kcxt->kvars_slot[slot_id]->expr_ops = NULL;
+			}
+			fallback_slots[fb_desc->fb_dst_resno - 1] = slot_id;
+		}
+		/* try write out a fallback tuple */
+		if (__writeOutCpuFallbackTuple(kcxt,
+									   fallback_ncols,
+									   fallback_slots,
+									   depth, l_state, matched))
+		{
+			/* successfull fallbacked, clear the error code */
+			kcxt->errcode = ERRCODE_STROM_SUCCESS;
+			return true;
+		}
+	}
+	return false;
+}
+
 /* ------------------------------------------------------------
  *
  * Routines to support GiST-Index
@@ -1619,12 +1958,12 @@ kern_extract_gist_tuple(kern_context *kcxt,
 	return __extract_heap_tuple_attr(kcxt, vl_desc->vl_slot_id, NULL);
 }
 
-PUBLIC_FUNCTION(uint32_t)
+PUBLIC_FUNCTION(uint64_t)
 ExecGiSTIndexGetNext(kern_context *kcxt,
 					 const kern_data_store *kds_hash,
 					 const kern_data_store *kds_gist,
 					 const kern_expression *kexp_gist,
-					 uint32_t l_state)
+					 uint64_t l_state)
 {
 	PageHeaderData *gist_page;
 	ItemIdData	   *lpp;
@@ -1650,7 +1989,7 @@ ExecGiSTIndexGetNext(kern_context *kcxt,
 	}
 	else
 	{
-		size_t		l_off = sizeof(ItemIdData) * l_state;
+		size_t		l_off = l_state;
 		size_t		diff;
 
 		assert(l_off >= kds_gist->block_offset &&
@@ -1684,13 +2023,20 @@ restart:
 		if (!kern_extract_gist_tuple(kcxt, kds_gist, itup, vl_desc))
 		{
 			assert(kcxt->errcode != ERRCODE_STROM_SUCCESS);
-			return UINT_MAX;
+			return ULONG_MAX;
 		}
 		/* runs index-qualifier */
 		if (!EXEC_KERN_EXPRESSION(kcxt, karg_gist, &status))
 		{
 			assert(kcxt->errcode != ERRCODE_STROM_SUCCESS);
-			return UINT_MAX;
+			/*
+			 * XXX - right now, we don't support CPU fallback in the GiST-Join
+			 *       index qualifiers. So, we just rewrite error code to stop
+			 *       execution.
+			 */
+			if (kcxt->errcode == ERRCODE_SUSPEND_FALLBACK)
+				kcxt->errcode = ERRCODE_DEVICE_ERROR;
+			return ULONG_MAX;
 		}
 		/* check result */
 		if (!XPU_DATUM_ISNULL(&status) && status.value)
@@ -1701,25 +2047,24 @@ restart:
 			{
 				const kern_varslot_desc *vs_desc;
 				uint32_t	slot_id = kexp_gist->u.gist.htup_slot_id;
-				uint32_t	t_off;
-				const char *addr;
+				uint32_t	rowid;
+				const kern_tupitem *tupitem;
 
 				assert(itup->t_tid.ip_posid == InvalidOffsetNumber);
-				t_off = ((uint32_t)itup->t_tid.ip_blkid.bi_hi << 16 |
+				rowid = ((uint32_t)itup->t_tid.ip_blkid.bi_hi << 16 |
 						 (uint32_t)itup->t_tid.ip_blkid.bi_lo);
-				addr = (const char *)kds_hash + __kds_unpack(t_off);
+				tupitem = KDS_GET_TUPITEM(kds_hash, rowid);
 				assert(slot_id < kcxt->kvars_nslots);
 				vs_desc = &kcxt->kvars_desc[slot_id];
 				assert(vs_desc->vs_ops == &xpu_internal_ops);
-				if (!vs_desc->vs_ops->xpu_datum_heap_read(kcxt, addr,
+				if (!vs_desc->vs_ops->xpu_datum_heap_read(kcxt, &tupitem->htup,
 														  kcxt->kvars_slot[slot_id]))
 				{
 					assert(kcxt->errcode != ERRCODE_STROM_SUCCESS);
-					return UINT_MAX;
+					return ULONG_MAX;
 				}
 				/* returns the offset of the next line item pointer */
-				assert((((uintptr_t)lpp) & (sizeof(ItemIdData)-1)) == 0);
-				return ((char *)(lpp+1) - (char *)(kds_gist)) / sizeof(ItemIdData);
+				return ((char *)(lpp+1) - (char *)(kds_gist));
 			}
 			block_nr = ((BlockNumber)itup->t_tid.ip_blkid.bi_hi << 16 |
 						(BlockNumber)itup->t_tid.ip_blkid.bi_lo);
@@ -1730,14 +2075,23 @@ restart:
 		}
 	}
 
-	if (!GistPageIsRoot(gist_page))
+	if (GistFollowRight(gist_page))
+	{
+		/* move to the next chain, if any */
+		uint32_t	rightlink = GistPageGetOpaque(gist_page)->rightlink;
+
+		gist_page = KDS_BLOCK_PGPAGE(kds_gist, rightlink);
+		start = FirstOffsetNumber;
+		goto restart;
+	}
+	else if (!GistPageIsRoot(gist_page))
 	{
 		/* pop to the parent page if not found */
 		start = gist_page->pd_parent_item + 1;
 		gist_page = KDS_BLOCK_PGPAGE(kds_gist, gist_page->pd_parent_blkno);
 		goto restart;
 	}
-	return UINT_MAX;	/* no more chance for this outer */
+	return ULONG_MAX;	/* no more chance for this outer */
 }
 
 PUBLIC_FUNCTION(bool)
@@ -1750,8 +2104,8 @@ ExecGiSTIndexPostQuals(kern_context *kcxt,
 {
 	const kvec_internal_t *kvecs;
 	HeapTupleHeaderData *htup;
-	xpu_bool_t		status;
 	uint32_t		slot_id;
+	int				status;
 
 	/* fetch the inner heap tuple */
 	assert(kexp_gist->opcode == FuncOpCode__GiSTEval);
@@ -1773,12 +2127,13 @@ ExecGiSTIndexPostQuals(kern_context *kcxt,
 	}
 	/* run the join quals */
 	kcxt_reset(kcxt);
-	if (!EXEC_KERN_EXPRESSION(kcxt, kexp_join, &status))
+	if (!ExecGpuJoinQuals(kcxt, kexp_join, &status))
 	{
-		assert(kcxt->errcode != ERRCODE_STROM_SUCCESS);
+		if (!HandleErrorIfCpuFallback(kcxt, depth, 0, false))
+			assert(kcxt->errcode != ERRCODE_STROM_SUCCESS);
 		return false;
 	}
-	return (!XPU_DATUM_ISNULL(&status) && status.value);
+	return (status > 0);
 }
 
 /* ----------------------------------------------------------------
@@ -1816,8 +2171,8 @@ xpu_array_datum_arrow_read(kern_context *kcxt,
 		case ArrowType__List:
 			{
 				const uint32_t *base = (const uint32_t *)
-					((const char *)kds + __kds_unpack(cmeta->values_offset));
-				if (sizeof(uint32_t) * (kds_index+2) > __kds_unpack(cmeta->values_length))
+					((const char *)kds + cmeta->values_offset);
+				if (sizeof(uint32_t) * (kds_index+2) > cmeta->values_length)
 				{
 					STROM_ELOG(kcxt, "Arrow::List reference out of range");
 					return false;
@@ -1834,8 +2189,8 @@ xpu_array_datum_arrow_read(kern_context *kcxt,
 		case ArrowType__LargeList:
 			{
 				const uint64_t   *base = (const uint64_t *)
-					((const char *)kds + __kds_unpack(cmeta->values_offset));
-				if (sizeof(uint64_t) * (kds_index+2) > __kds_unpack(cmeta->values_length))
+					((const char *)kds + cmeta->values_offset);
+				if (sizeof(uint64_t) * (kds_index+2) > cmeta->values_length)
 				{
 					STROM_ELOG(kcxt, "Arrow::LargeList reference out of range");
 					return false;
@@ -2418,7 +2773,7 @@ PGSTROM_SQLTYPE_OPERATORS(internal,true,8,8);
  */
 #define TYPE_OPCODE(NAME,a,b)					\
 	{ TypeOpCode__##NAME, &xpu_##NAME##_ops },
-PUBLIC_DATA xpu_type_catalog_entry builtin_xpu_types_catalog[] = {
+PUBLIC_DATA(xpu_type_catalog_entry, builtin_xpu_types_catalog[]) = {
 #include "xpu_opcodes.h"
 	//{ TypeOpCode__composite, &xpu_composite_ops },
 	{ TypeOpCode__array, &xpu_array_ops },
@@ -2433,7 +2788,7 @@ PUBLIC_DATA xpu_type_catalog_entry builtin_xpu_types_catalog[] = {
 	{FuncOpCode__##NAME, pgfn_##NAME},
 #define DEVONLY_FUNC_OPCODE(a,NAME,b,c,d)	\
 	{FuncOpCode__##NAME, pgfn_##NAME},
-PUBLIC_DATA xpu_function_catalog_entry builtin_xpu_functions_catalog[] = {
+PUBLIC_DATA(xpu_function_catalog_entry, builtin_xpu_functions_catalog[]) = {
 	{FuncOpCode__ConstExpr, 				pgfn_ConstExpr },
 	{FuncOpCode__ParamExpr, 				pgfn_ParamExpr },
 	{FuncOpCode__VarExpr,					pgfn_VarExpr },
@@ -2457,6 +2812,7 @@ PUBLIC_DATA xpu_function_catalog_entry builtin_xpu_functions_catalog[] = {
 	{FuncOpCode__ScalarArrayOpAll,			pgfn_ScalarArrayOp},
 #include "xpu_opcodes.h"
 	{FuncOpCode__Projection,                pgfn_Projection},
+	{FuncOpCode__SortKeys,					pgfn_SortKeys},
 	{FuncOpCode__LoadVars,                  pgfn_LoadVars},
 	{FuncOpCode__MoveVars,					pgfn_MoveVars},
 	{FuncOpCode__HashValue,                 pgfn_HashValue},
