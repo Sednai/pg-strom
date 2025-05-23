@@ -1172,7 +1172,7 @@ static aggfunc_catalog_t	aggfunc_catalog_array_ps[] = {
 	 KSORT_KEY_KIND__PAVG_INT64
 	},
 	{"avg(int8)",
-	 "s:avg_int64(bytea)",
+	 "s:avg_bigint_ps(bytea)",
 	 "s:pavg64(int8)",
 	 "s:favg_int64(bytea)",
 	 KAGG_ACTION__PAVG_INT64, false,
@@ -1658,7 +1658,7 @@ static aggfunc_catalog_t	aggfunc_catalog_array_ps[] = {
 	},
 	{ NULL, NULL, NULL, NULL, -1, false },
 };
-
+#endif
 /*
  * aggfunc_catalog_entry; hashed catalog entry
  */
@@ -1857,8 +1857,12 @@ __setup_aggfunc_catalog_entry(aggfunc_catalog_entry *entry,
 	/* final agg function (used by Agg node) */
 	Assert(cat->finalfn_agg_signature != NULL);
 	func_oid = __aggfunc_resolve_func_signature(cat->finalfn_agg_signature, false);
+#ifdef AERO
+if (!SearchSysCacheExists1(AGGFNOID, ObjectIdGetDatum(func_oid)))
+#else
 	if (!SearchSysCacheExists1(AGGFNOID, ObjectIdGetDatum(func_oid)) ||
 		get_func_rettype(func_oid) != agg_proc->prorettype)
+#endif
 		elog(ERROR, "Catalog corruption? final function mismatch: %s",
 			 format_procedure(func_oid));
 	htup = SearchSysCache1(PROCOID, ObjectIdGetDatum(func_oid));
