@@ -1915,7 +1915,9 @@ aggfunc_catalog_lookup_by_oid(Oid aggfn_oid)
 	{
 		Form_pg_proc proc;
 		HeapTuple htup;
-
+#ifdef AERO
+		aggfunc_catalog_t* catalog;
+#endif
 		entry->is_valid_entry = false;
 		PG_TRY();
 		{
@@ -1941,7 +1943,6 @@ aggfunc_catalog_lookup_by_oid(Oid aggfn_oid)
 				}
 				off += sprintf(buf + off, ")");
 #ifdef AERO
-				aggfunc_catalog_t* catalog;
 				if(IS_PGXC_DATANODE && IsConnFromCoord()) 
 					catalog = aggfunc_catalog_array_ps;
 				else

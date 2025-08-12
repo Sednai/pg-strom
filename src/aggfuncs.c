@@ -810,13 +810,13 @@ pgstrom_favg_final_int(PG_FUNCTION_ARGS)
 PUBLIC_FUNCTION(Datum)
 pgstrom_favg_final_int_partialstate(PG_FUNCTION_ARGS)
 {
-	kagg_state__psum_int_packed *state;
-	
-	state = (kagg_state__psum_int_packed *)PG_GETARG_BYTEA_P(0);
-	
 	Datum		transdatums[2];
 	ArrayType  *result;
 
+	kagg_state__psum_int_packed *state;
+	
+	state = (kagg_state__psum_int_packed *)PG_GETARG_BYTEA_P(0);
+		
 	transdatums[0] = (int64) state->nitems;
 	transdatums[1] = state->sum;
 	
@@ -831,13 +831,12 @@ pgstrom_favg_final_int_partialstate(PG_FUNCTION_ARGS)
 PUBLIC_FUNCTION(Datum)
 pgstrom_favg_final_bigint_partialstate(PG_FUNCTION_ARGS)
 {
-	kagg_state__psum_int_packed *state;
-	
-	state = (kagg_state__psum_int_packed *)PG_GETARG_BYTEA_P(0);
-	
 	StringInfoData buf;
 	bytea	   *result;
 	NumericVar	tmp_var;
+	kagg_state__psum_int_packed *state;
+	
+	state = (kagg_state__psum_int_packed *)PG_GETARG_BYTEA_P(0);
 	
 	init_var(&tmp_var);
 
