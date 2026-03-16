@@ -697,21 +697,22 @@ _PG_init(void)
 		 PG_MAJORVERSION,
 		 pgstrom_githash_cstring);
 	/* init GPU related stuff */
-	if (pgstrom_init_gpu_device())
-	{
-		pgstrom_init_gpu_service();
-		pgstrom_init_gpu_scan();
-		pgstrom_init_gpu_join();
-		pgstrom_init_gpu_preagg();
-		pgstrom_init_gpu_cache();
-	}
+//	if (pgstrom_init_gpu_device())
+//	{
+//		pgstrom_init_gpu_service();
+//		pgstrom_init_gpu_scan();
+//		pgstrom_init_gpu_join();
+//		pgstrom_init_gpu_preagg();
+//		pgstrom_init_gpu_cache();
+//	}
 	/* init DPU related stuff */
-	if (pgstrom_init_dpu_device())
-	{
-		pgstrom_init_dpu_scan();
-		pgstrom_init_dpu_join();
-		pgstrom_init_dpu_preagg();
-	}
+//	if (pgstrom_init_dpu_device())
+//	{
+//		pgstrom_init_dpu_scan();
+//		pgstrom_init_dpu_join();
+//		pgstrom_init_dpu_preagg();
+//	}
+	
 	/* callback for the extension checker */
 	CacheRegisterSyscacheCallback(NAMESPACEOID, pgstrom_extension_checker_callback, 0);
 	/* dummy custom-scan node */
